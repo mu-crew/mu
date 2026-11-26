@@ -77,7 +77,8 @@ the agent's row, tasks, worktree owner and recovery.
 2. Placements name combinations, not an order (§A) (*brief*): **local**
    (a local worker), **remote workspace** (a local loop with a remote
    workspace and shell, §C) and **remote loop** (over a session pane, a
-   lease or a provider host's plugin job). `mu host exec` is a **remote
+   lease or another plugin job, on a static or a provider host: transport
+   and host are independent). `mu host exec` is a **remote
    command**, not a placement. Local and remote loop agents keep all three
    on the job's machine.
 3. **The DB holds placement** (Q16): `agents.host`, `cwd`,
@@ -206,7 +207,7 @@ Where plugins D1 and D8 differ, this section supersedes them (§G).
 
 1. **A synchronous link call** (`HostLink.exec`), admitted per §4, with no
    row, task, pane or job record; for workspace commands, not bulk
-   transfer (mule `SPEC.md:49`); v1's only gate on the shared capped connection (Q7); an SSH template gate keeps its own connection (§A).
+   transfer (mule `SPEC.md:49`); v1's only gate on the shared capped connection (Q7); a gate on the SSH starter keeps its own connection (§A).
 2. **Size.** (a) `link.fits` before admission: the template's expanded
    argv (`src/host-link.ts:186-192`) or a plugin's script plus cwd; a
    failure is a typed refusal, exit 2, nothing run. (b) Again in
@@ -346,7 +347,7 @@ its conditions.
 | local | none · none · `pane` | pi `ctl`; known hook harnesses `hooks`, other workers `mux`; pi `hooks` is an opt-in (`src/agents/spawn.ts:823-832,1259-1272`) | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a | n/a | shipped |
 | remote command | static · template or plugin · none | no channel | no channel | no channel | not needed | fine over the mule link | `host_exec` |
 | remote workspace | static · mule plugin · local pane | pi `ctl` local | pi `ctl` local | refused | not needed | mule controls admission | unreleased |
-| remote loop (session) | static · template (session) · `pane` | pi `ctl` forwarded; others remote `hooks` | pi `ctl`; others `mux` | refused | needed | fine: each pane opens its own connection | shipped |
+| remote loop (session) | static · template (session) · `pane` | pi `ctl` forwarded; others remote `hooks` | pi `ctl`; others `mux` | refused | needed | fine with the SSH starter (its own connection per pane); a shared master needs a free session | shipped |
 | remote loop (plugin job) | static · ssh plugin · `pane` | built-in `ctl`/`hooks`, if conditions hold | refused (a plugin job view) | refused | needed | as above | `plugin_ssh_pane`, `job_plugin_builtin_channels` |
 | remote loop (lease) | static · template (lease) · `lease` | pi `ctl` via the carrier | refused (a lease view) | refused | needed | fine (one master) | shipped, pi only |
 | remote loop (lease) | static · mule plugin · `lease` | built-in `ctl`, if conditions hold | refused (a plugin job view) | refused | needed | fine | `plugin_mule_link`, `plugin_mule_lease`, `job_plugin_builtin_channels` |
@@ -359,17 +360,18 @@ its conditions.
   (for `ctl`) and the env; the view is interactive where the channel needs stdin (`hooks`, `mux`), not for `ctl` over a noninteractive mule carrier. Today plugin spawn
   gives the view stdin `/dev/null`, sets no hooks and hands no socket pair
   (`src/agents/spawn-plugin.ts:104,238-258,413-414`; plugins D3, D8). On
-  a provider host a built-in channel needs `firstTurn: "on-send"`; an at-start kind
+  any host, static or provider, a built-in channel needs `firstTurn: "on-send"`; an at-start kind
   needs its own channel and a reply baseline (`:86-90,273-275`).
 - Remote `hooks` needs a backend that anchors and pastes, and a remote key
   (`src/agents/spawn.ts:817-822,914-923`): tmux only. Elsewhere a non-pi
   worker is on `mux` (`:1259-1272`).
 - A lease carrier does not forward stdin (mule `SPEC.md:98`), so a non-pi
   worker on a lease has no input path, on any backend.
-- A session pane uses `ControlMaster=no ControlPath=none`
-  (`src/hosts.ts:397-405`), so per-connection `MaxSessions 1` does not
-  block it. A host where only one connection is practical (a prompted
-  master) does. A session pane over a shared master is not supported.
+- mu's SSH session starter uses `ControlMaster=no ControlPath=none`
+  (`src/hosts.ts` `hostStarter`), so per-connection `MaxSessions 1` does
+  not block it. A template that shares one master (where only one
+  connection is practical, such as a prompted master) needs a free session
+  on it.
 - Rex runs remote workspaces and session templates. A real private Rex integration
   test covers their launch inputs after interactive shell startup
   (`test/rex-placement-spawn.integration.test.ts`). Every lease and plugin job
@@ -382,7 +384,8 @@ its conditions.
 | Situation | Reach for |
 | --- | --- |
 | One build or test on a host, no agent | a remote command, `mu host exec` |
-| The host runs the loop and takes a new connection per pane | a remote loop over a session |
+| The host runs the loop, the link is stable, and losing the run on a drop is acceptable | a remote loop over a session (attached to its ssh tty) |
+| The agent must survive a dropped link or a sleeping laptop | a remote loop over a lease, or a plugin job whose job survives |
 | Only one connection is practical (a prompted master) | a remote loop over a mule lease, on tmux; a remote command for single commands |
 | A crew on such a host | a lease: only polls cross the connection |
 | The host cannot run the loop (no credentials or model API) | a remote workspace, once it ships |

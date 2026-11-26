@@ -5,16 +5,18 @@ forwarded control socket. On tmux, session workers running claude, codex,
 cursor-agent or muse use remote [`hooks`](#a-claude-codex-cursor-agent-or-muse-worker).
 On Rex they use `mux`: no hook receipt or hook-based `CLOSE:` processing.
 For plugin jobs, check `mu agent list`: a plugin can declare its own channel.
-Lease and plugin job views (any `--plugin` profile, even one that stores
-`transport=session`) run on tmux only ([placement](placement.md#refusals)).
+Lease and plugin job views (a `--host` spawn on a `--plugin` profile, even
+one that stores `transport=session`) run on tmux only
+([placement](placement.md#refusals)); a remote workspace (`--mule`) opens no
+such view and runs on Rex too.
 mu never connects and
 knows no ssh flags: a host profile holds your own command templates, and
 `mu agent spawn --host` fills them. The full recipe, with collecting and
 the traps, is in
 [skills/mu/recipes/remote-workers.md](../../skills/mu/recipes/remote-workers.md).
 Read it before your first remote spawn. Which placement fits (a remote
-workspace, or a remote loop over a session, a lease or a provisioned host;
-or a one-off `mu host exec`) is in [placement](placement.md); this page
+workspace, or a remote loop over a session, a lease or another plugin job,
+on your host or a provisioned one; or a one-off `mu host exec`) is in [placement](placement.md); this page
 covers the remote loop and the shared profile grammar.
 
 ## Prepare the host

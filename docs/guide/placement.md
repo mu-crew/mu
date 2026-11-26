@@ -21,12 +21,17 @@ remote loop that pane holds ssh, a carrier or a plugin view.
 loop, even through mule's lease. A remote workspace needs mule >= 0.7.0 and
 its pi extension.
 
-A remote loop is reached over one of three **transports**: a **session** (a
-`session` template; each pane opens its own connection), a **lease** (a
-`--transport lease` template or the mule plugin's `lease` job kind: a job on
-the host behind one master), or a **plugin job** (a provider plugin's job
-kind). The **host** is either **your host** (a profile you added) or a
-**provisioned host** (a provider plugin makes it and releases it).
+A remote loop is reached over one of three **transports**: a **session**
+template, a **lease** (a `--transport lease` template or mule's plugin
+lease), or another **plugin job**. The **host** is either **your host** (a
+profile you added) or a **provisioned host** (a provider plugin makes it and
+releases it).
+
+Transport and host are independent. mule's lease is a plugin job on your
+host, the ssh example plugin's job runs on a host you already have, and a
+provider plugin's job runs on a provisioned host. The
+[org placement page](https://github.com/mu-crew/.github/blob/main/PLACEMENT.md)
+says which tool covers each part.
 
 A **remote command** is not a placement, because no agent runs:
 `mu host exec <host> -- <cmd>` runs one command on the host.
@@ -37,7 +42,8 @@ A **remote command** is not a placement, because no agent runs:
 | --- | --- |
 | Nothing forces you off this machine | **local** |
 | The code, data or hardware is on the host, and you want your session, UI and extensions here; or the host cannot run the loop (no credentials, no model API) | [**remote workspace**](#remote-workspace) |
-| The host runs the harness, and the agent should run there | **remote loop**: a lease if the link is flaky (the job survives a dropped link or a sleeping laptop) or sessions are capped (only one connection is practical, such as a prompted master); a session otherwise (each pane opens its own connection, and the agent ends with it) |
+| The agent must keep working when your laptop sleeps or the link drops, and the host runs the harness | **remote loop** over a lease, or a plugin job whose job outlives the drop |
+| The host runs the harness and the link is stable, and losing the run on a drop is acceptable | **remote loop** over a session. A session is attached to its ssh tty. |
 | No suitable machine | **remote loop** on a [provisioned host](remote.md#provider-hosts) |
 | One build or test on a host, no agent | [**remote command**](#remote-command-mu-host-exec) |
 | herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex also runs a remote workspace and session templates) |
@@ -49,16 +55,20 @@ or a git identity.
 
 ## Support matrix
 
-Support depends on the placement and the transport, never on a name.
+Support depends on placement and transport.
 
-| Placement | Transport | Harnesses | Mux (your pane) | One session per connection |
-| --- | --- | --- | --- | --- |
-| local | none | all five | tmux, Rex, herdr | n/a |
-| remote workspace | mule | pi only (today) | tmux, Rex; herdr refused | mule controls admission |
-| remote loop | session | pi; the other four via remote hook events on tmux, via `mux` on Rex | tmux, Rex (session templates); herdr refused | fine: each pane opens its own connection |
-| remote loop | lease | pi only (a lease carrier forwards no stdin) | tmux | fine: one master |
-| remote loop | plugin job (provisioned host) | what the provider's plugin and host offer | tmux | the provider's |
-| remote command | the host's link | none (no agent) | any (no pane) | fine over a link that serialises itself |
+| Placement | Transport | Harnesses | Multiplexer (your pane) |
+| --- | --- | --- | --- |
+| local | none | all five | tmux, Rex, herdr |
+| remote workspace | mule | pi only (today) | tmux, Rex; herdr refused |
+| remote loop | session | pi; the other four on tmux via remote hook events, on Rex polled (no hook receipt or hook-based close) | tmux, Rex; herdr refused |
+| remote loop | lease (a lease template or mule's plugin lease) | pi only: a lease carrier forwards no stdin | tmux |
+| remote loop | other plugin job (on your host or a provisioned one) | what the plugin and host offer | tmux; Rex and herdr refused |
+| remote command | the host's link | none: no agent | any (no pane) |
+
+On an sshd with `MaxSessions 1`, mu's SSH session starter opens its own
+connection per pane, so it needs no lease; a template that shares one master
+needs a free session on it. mule runs every op over the one master you opened.
 
 Channels:
 
@@ -79,9 +89,9 @@ Limits:
 
 - Remote `hooks` needs a backend that anchors and pastes: tmux only.
   Elsewhere a non-pi worker is on `mux`; tmux has no `mux` send and refuses.
-- For a remote loop, Rex runs session templates only. The `pane` job kind of
-  the ssh example plugin runs on your host but is a plugin job view, so Rex
-  refuses it like a lease or a provisioned host's job.
+- For a remote loop, Rex runs session templates only. It refuses every lease
+  and plugin job view, on your host or a provisioned one: mule's lease and the
+  ssh example plugin's `pane` job included.
 
 ## Remote command: `mu host exec`
 
