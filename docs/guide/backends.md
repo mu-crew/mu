@@ -8,11 +8,11 @@ report OSC 7501 (see below).
 
 ## tmux: vtmux or vanilla
 
-mu on tmux wants **vtmux >= 3.8-rc3** with `set -s vtmux-program-status on` and
-`set -s vtmux-program-resume on`. vtmux keeps the OSC 7501 (program status) and
-OSC 7577 (program resume) records that pi, Claude Code and Codex emit, and mu
-reads them natively through `paneStatus()`, as it does on Rex. No murmur hooks
-are needed.
+mu on tmux wants **vtmux >= 3.8-rc3** with `set -s vtmux-program-status on`
+(and `set -s vtmux-program-resume on` for session resume). vtmux keeps the
+OSC 7501 (program status) records that pi, Claude Code and Codex emit natively,
+and mu reads them directly through `paneStatus()`, as it does on Rex. No murmur
+hooks are needed.
 
 On **vanilla tmux 3.8**, which drops both sequences, pi workers still work
 fully via the `ctl` socket (only the `mu/delegates` window-tab glyph is
