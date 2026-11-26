@@ -73,7 +73,8 @@ describeIfTmux(
     /** Kill the private server; a new one's first agent pane recycles the old id. */
     const restartServer = async (): Promise<string> => {
       await real(["kill-server"]).catch(() => {});
-      await pollUntil(async () => (await serverIdentity()) === undefined, {
+      // A server mid-exit answers "server exited unexpectedly" (serverIdentity throws): not gone yet.
+      await pollUntil(async () => (await serverIdentity().catch(() => "exiting")) === undefined, {
         description: "old server gone",
       });
       await ensureSession(session);
@@ -142,9 +143,12 @@ describeIfTmux(
         if (restarted === undefined && args.includes("-P")) {
           restarted = (async () => {
             await real(["kill-server"]);
-            await pollUntil(async () => (await serverIdentity()) === undefined, {
-              description: "server gone",
-            });
+            await pollUntil(
+              async () => (await serverIdentity().catch(() => "exiting")) === undefined,
+              {
+                description: "server gone",
+              },
+            );
             await real(["new-session", "-d", "-s", "later", "sh -c 'sleep 60'"]);
           })();
           await restarted;

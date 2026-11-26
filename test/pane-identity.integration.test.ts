@@ -57,7 +57,7 @@ describeIfTmux("pane identity across a tmux server restart (real tmux, private s
   /** Kill the private server and start a new one whose first agent pane recycles the old id. */
   const restartServer = async (): Promise<string> => {
     await tmux(["kill-server"]).catch(() => {});
-    await pollUntil(async () => (await serverIdentity()) === undefined, {
+    await pollUntil(async () => (await serverIdentity().catch(() => "exiting")) === undefined, {
       description: "old server gone",
     });
     await ensureSession(session);
