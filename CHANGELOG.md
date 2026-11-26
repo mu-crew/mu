@@ -16,6 +16,13 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Added
 
+- **Op provenance:** every op now carries nullable `actor_session` and `actor_anchor` (`ops` and `op_ctx`, added in place; capture revision 6 → 7). They default from `MU_ACTOR_SESSION` / `MU_ACTOR_ANCHOR`, else `pi:$PI_SESSION_ID` and the latest assistant entry (`<id>[:<toolCallId>]`) in the tail of `$PI_SESSION_FILE`; `null` when unknown. `withOpContext` takes `actorSession` / `actorAnchor`; `listLogs()` rows expose `key`, `actorSession` and `actorAnchor`.
+- `mu task note --review` files a note of the new `review` kind. An existing DB's `task_notes` is rebuilt once on open to admit it, rows kept.
+
+## [5.6.0] — 2026-11-26
+
+### Added
+
 - **Native vtmux OSC 7501 pane status:** `tmuxBackend.paneStatus()` reads `#{pane_program_*}` directly when running on vtmux >= 3.8-rc3 with `vtmux-program-status on`, matching the Rex backend (blocked permission sub-records outrank a working root; other states read the root record). Ranked ahead of murmur in `agent-state.ts` and used as a fallback in `readHooksPane`, so non-pi workers (Claude Code, Codex, Cursor, Muse) need no murmur hooks on vtmux. Stock tmux pays zero extra subprocesses and keeps the murmur 2.x fallback.
 - **Crew pane tags:** spawned tmux panes (including plugin-backed views) are tagged atomically with `@mu_agent`, `@mu_workstream`, and `@mu_role` so murmur 3.0 identifies crew panes directly in `list-panes`.
 - **Delegate waiting status (OSC 7501):** `mu`'s pi extension emits `state=working:id=mu/delegates` while delegates are in flight and clears it at zero, so vtmux window tabs, pane borders, murmur 3.0, and Rex show waiting state natively.

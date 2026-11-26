@@ -34,6 +34,17 @@ afterEach(() => {
   rmFixtureDir(dir);
 });
 
+const kindsOf = (path: string): string[] => {
+  const d = openDb({ path });
+  try {
+    return (d.prepare("SELECT kind FROM task_notes ORDER BY id").all() as { kind: string }[]).map(
+      (n) => n.kind,
+    );
+  } finally {
+    d.close();
+  }
+};
+
 const kinds = (): { kind: string; content: string }[] =>
   db.prepare("SELECT kind, content FROM task_notes ORDER BY id").all() as {
     kind: string;
@@ -200,6 +211,17 @@ describe("CLI note kinds", () => {
     const got = d.prepare("SELECT kind FROM task_notes").all();
     d.close();
     expect(got).toEqual([{ kind: "verdict" }]);
+  });
+
+  it("--review files a review note; with --report or --kind it is a usage error", async () => {
+    const r = await runCliJson(
+      ["task", "note", "t", "looks wrong", "--review", "-w", "w", "--json"],
+      dbPath,
+    );
+    expect((r.data as { note: { kind: string } }).note.kind).toBe("review");
+    const bad = await runCli(["task", "note", "t", "x", "--review", "--report", "-w", "w"], dbPath);
+    expect(bad.exitCode).toBe(2);
+    expect(kindsOf(dbPath)).toEqual(["review"]);
   });
 
   it("--report together with --kind is a usage error and writes nothing", async () => {

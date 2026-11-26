@@ -785,6 +785,8 @@ describe("op capture (triggers)", () => {
         groupId: null,
         actor: null,
         intent: null,
+        actorSession: null,
+        actorAnchor: null,
         applying: false,
       });
     });

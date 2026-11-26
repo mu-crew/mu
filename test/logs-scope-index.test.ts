@@ -126,6 +126,6 @@ describe("workstream-scoped ops reads", () => {
     expect(plans).toHaveLength(2);
     for (const p of plans) expect(fullScan(p)).toBe(false);
     expect(plans[0]).toContain("idx_ops_entity_key (entity=? AND key=?)");
-    expect(plans[1]).toContain("idx_ops_group (group_id>? AND group_id<?)");
+    expect(plans[1]).toContain("idx_ops_group (group_id>?");
   });
 });

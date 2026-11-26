@@ -243,7 +243,7 @@ export const MESSAGES = {
     `note text given twice (${names.join(" and ")}): pass it once, positionally or via -m/--message/--note/--text`,
   "task.note_required": () =>
     'note text required: mu task note <id> "..." (or -m/--message/--note/--text "...")',
-  "task.note_kind_twice": () => "--report and --kind both set the note kind: pass one",
+  "task.note_kind_twice": () => "--report, --review and --kind each set the note kind: pass one",
   // By the owner's channel's steer: `mid-turn` steers; `none` interrupts or waits for the turn;
   // `as-send` only sends.
   "task.note_unseen": (

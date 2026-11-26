@@ -125,7 +125,7 @@ describe("v12 shape", () => {
     // impact / effort_days stay NOT NULL, now with SQL defaults 50 / 1.
     expect(cols("tasks").get("impact")).toMatchObject({ notnull: 1, dflt: "50" });
     expect(cols("tasks").get("effort_days")).toMatchObject({ notnull: 1, dflt: "1" });
-    expect(NOTE_KINDS).toEqual(["brief", "report", "verdict", "close", "note"]);
+    expect(NOTE_KINDS).toEqual(["brief", "report", "review", "verdict", "close", "note"]);
   });
 
   it("CHECK constraints reject bad scored / kind values", () => {

@@ -288,6 +288,8 @@ describe("mu sql refuses user transaction control", () => {
       groupId: null,
       actor: null,
       intent: null,
+      actorSession: null,
+      actorAnchor: null,
       applying: false,
     });
   });

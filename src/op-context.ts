@@ -35,6 +35,7 @@
 
 import { randomUUID } from "node:crypto";
 import { type Db, prepareCached } from "./db.js";
+import { resolveProvenance } from "./provenance.js";
 
 /** What an op context carries. All fields optional — a partial context
  *  is fine and a null intent is captured as null (fail safe). */
@@ -58,6 +59,10 @@ export interface OpContext {
   intentIfUnset?: string | undefined;
   /** Who caused it. Free text (lands in `ops.actor`): an agent name, "user", "system". */
   actor?: string | undefined;
+  /** Harness session behind the op (`pi:<id>`). Unset: inherited, else `resolveProvenance()`. */
+  actorSession?: string | undefined;
+  /** Assistant turn (and tool call) that ran the verb. Unset: inherited, else `resolveProvenance()`. */
+  actorAnchor?: string | undefined;
   /**
    * Op grouping:
    *   - omitted   inherit the enclosing group, or start one if none.
@@ -71,18 +76,29 @@ interface CtxRow {
   group_id: string | null;
   actor: string | null;
   intent: string | null;
+  actor_session: string | null;
+  actor_anchor: string | null;
   applying: number;
 }
 
 /** The context at rest: what a row holds whenever no wrapper is active,
  *  and what a plain write from any connection is stamped with. */
-const DEFAULT_CTX: CtxRow = { group_id: null, actor: null, intent: null, applying: 0 };
+const DEFAULT_CTX: CtxRow = {
+  group_id: null,
+  actor: null,
+  intent: null,
+  actor_session: null,
+  actor_anchor: null,
+  applying: 0,
+};
 
 /** Read the current context. Exported for tests and for `mu doctor`. */
 export function currentOpContext(db: Db): {
   groupId: string | null;
   actor: string | null;
   intent: string | null;
+  actorSession: string | null;
+  actorAnchor: string | null;
   applying: boolean;
 } {
   const row = readCtx(db) ?? DEFAULT_CTX;
@@ -90,6 +106,8 @@ export function currentOpContext(db: Db): {
     groupId: row.group_id,
     actor: row.actor,
     intent: row.intent,
+    actorSession: row.actor_session,
+    actorAnchor: row.actor_anchor,
     applying: row.applying !== 0,
   };
 }
@@ -97,17 +115,19 @@ export function currentOpContext(db: Db): {
 function writeCtx(db: Db, row: CtxRow): void {
   prepareCached(
     db,
-    `INSERT INTO op_ctx (id, group_id, actor, intent, applying)
-     VALUES (1, @group_id, @actor, @intent, @applying)
+    `INSERT INTO op_ctx (id, group_id, actor, intent, actor_session, actor_anchor, applying)
+     VALUES (1, @group_id, @actor, @intent, @actor_session, @actor_anchor, @applying)
      ON CONFLICT (id) DO UPDATE SET group_id = excluded.group_id, actor = excluded.actor,
-                                    intent = excluded.intent, applying = excluded.applying`,
+                                    intent = excluded.intent, applying = excluded.applying,
+                                    actor_session = excluded.actor_session,
+                                    actor_anchor = excluded.actor_anchor`,
   ).run(row);
 }
 
 function readCtx(db: Db): CtxRow | undefined {
   return prepareCached(
     db,
-    "SELECT group_id, actor, intent, applying FROM op_ctx WHERE id = 1",
+    "SELECT group_id, actor, intent, actor_session, actor_anchor, applying FROM op_ctx WHERE id = 1",
   ).get() as CtxRow | undefined;
 }
 
@@ -221,6 +241,8 @@ const sameCtx = (a: CtxRow, b: CtxRow): boolean =>
   a.group_id === b.group_id &&
   a.actor === b.actor &&
   a.intent === b.intent &&
+  a.actor_session === b.actor_session &&
+  a.actor_anchor === b.actor_anchor &&
   a.applying === b.applying;
 
 /**
@@ -243,8 +265,17 @@ export function withOpContext<T>(db: Db, ctx: OpContext, fn: () => T): T {
           : ctx.group !== undefined
             ? ctx.group
             : (previous.group_id ?? randomUUID());
+      // Provenance: explicit, else inherited, else the process env. Read only when
+      // nothing set it yet, so a nested scope costs no file read.
+      const needProvenance =
+        ctx.actorSession === undefined &&
+        ctx.actorAnchor === undefined &&
+        (previous.actor_session === null || previous.actor_anchor === null);
+      const env = needProvenance ? resolveProvenance() : undefined;
       return {
         group_id: groupId,
+        actor_session: ctx.actorSession ?? previous.actor_session ?? env?.actorSession ?? null,
+        actor_anchor: ctx.actorAnchor ?? previous.actor_anchor ?? env?.actorAnchor ?? null,
         // An explicit undefined inherits; only a provided value overrides.
         actor: ctx.actor !== undefined ? ctx.actor : previous.actor,
         intent:
