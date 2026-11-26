@@ -413,7 +413,7 @@ export interface HostProfileReference {
   id: number;
 }
 
-/** Ladder §7.3: doctor and the add fence use the same records, even after `host rm`. */
+/** Placement spec §7.3: doctor and the add fence use the same records, even after `host rm`. */
 export function hostProfileReferences(db: Db, host: string): HostProfileReference[] {
   return db
     .prepare(
@@ -1412,12 +1412,12 @@ export async function checkHost(
           },
           () => noHarnessDetail(capabilities),
         );
-        // A mule profile serves rung 2 (--mule) with pi running locally: the host's harnesses
+        // A mule profile serves a remote workspace (--mule) with pi running locally: the host's harnesses
         // matter only to a --host spawn, so none found is advice there, not a failure.
         const hs = steps[steps.length - 1];
         if (profile?.plugin === "mule" && capabilities !== undefined && hs?.ok === false) {
           hs.ok = null;
-          hs.detail = `${hs.detail}; not needed for --mule (rung 2), only for --host spawns`;
+          hs.detail = `${hs.detail}; not needed for a remote workspace (--mule), only for --host spawns`;
         }
         if (capabilities !== undefined) {
           // A provider host has no profile to record the probe on: the report carries it.
@@ -1439,7 +1439,7 @@ export async function checkHost(
               ok: null,
               detail:
                 profile?.plugin === "mule"
-                  ? "skipped: the host has no pi (not needed for --mule (rung 2): pi runs locally)"
+                  ? "skipped: the host has no pi (not needed for a remote workspace (--mule): pi runs locally)"
                   : "skipped: the host has no pi",
             });
           }

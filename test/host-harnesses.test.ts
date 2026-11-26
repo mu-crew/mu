@@ -105,7 +105,7 @@ afterEach(() => {
 });
 
 describe("the harness probe in host check", () => {
-  it("a mule plugin profile without pi says pi is not needed for --mule (rung 2)", async () => {
+  it("a mule plugin profile without pi says pi is not needed for a remote workspace (--mule)", async () => {
     // No harness shim: the fake plugin's link.exec runs with this process's HOME, so a hooks
     // step would read the machine's real harness config.
     const f = fakePlugin(dir, { home, seams: linkSeam() }, "mule");
@@ -115,7 +115,7 @@ describe("the harness probe in host check", () => {
     expect(r.ok).toBe(true);
     expect(stepOf(r, "pi")).toMatchObject({
       ok: null,
-      detail: expect.stringContaining("not needed for --mule (rung 2)"),
+      detail: expect.stringContaining("not needed for a remote workspace (--mule)"),
     });
     expect(stepOf(r, "extension")?.ok).toBeNull();
   });
@@ -128,7 +128,7 @@ describe("the harness probe in host check", () => {
     expect(r.ok).toBe(true);
     expect(stepOf(r, "harnesses")).toMatchObject({
       ok: null,
-      detail: expect.stringContaining("not needed for --mule (rung 2)"),
+      detail: expect.stringContaining("not needed for a remote workspace (--mule)"),
     });
   });
 
