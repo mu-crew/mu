@@ -610,9 +610,11 @@ describe("df1_wait_stale_dead: a deliberate close of a finished worker is not a 
     seedTask("t2");
     await serve("worker-1");
     await as({ managed: "auth/worker-1" }, ["task", "claim", "t1", "-w", "auth", "--json"]);
-    // a wait registers the spawned worker and its task by provenance, then delivers the close
+    // a wait registers the spawned worker and its task by provenance and delivers the worker's
+    // settle, which leaves the registration; the next wait delivers the close
     const t1 = await as(SESSION, ["wait", "-w", "auth", "--timeout", "0.3"]);
-    expect(reg(CALLER)?.refs.some((x) => x.kind === "agent")).toBe(true);
+    expect(t1.data).toMatchObject({ firing: { kind: "settled", ref: "agent:auth/worker-1" } });
+    expect(reg(CALLER)?.refs.map((x) => `${x.kind}:${x.id}`)).toEqual(["task:t1"]);
     closeTaskAs("t1");
     const first = await as(SESSION, ["wait", "-w", "auth"]);
     expect(first.data).toMatchObject({ firing: { kind: "closed", ref: "task:auth/t1" } });

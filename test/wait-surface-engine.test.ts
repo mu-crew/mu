@@ -70,11 +70,9 @@ describe("provenance: a wait with no refs owns what its caller spawned", () => {
       },
     });
     expect(r.event).toMatchObject({ kind: "closed", ref: { kind: "task", id: "mine" } });
-    // Registered durably, with a zero baseline: the next wait still owes it, and a reaped owner is seen.
+    // Registered durably: the delivered close leaves the registration, the agent is still owed.
     const reg = readWaitRegistration(env.db, "w/boss");
-    expect(reg?.refs.map((x) => `${x.kind}:${x.id}`).sort()).toEqual(
-      expect.arrayContaining(["agent:a1", "task:mine"]),
-    );
+    expect(reg?.refs.map((x) => `${x.kind}:${x.id}`).sort()).toEqual(["agent:a1"]);
     expect(reg?.refs.some((x) => x.id === "theirs" || x.id === "a2")).toBe(false);
   });
 
@@ -663,8 +661,9 @@ describe("one fact, one event: a settle whose CLOSE closed the task, and the tas
     });
     // Both are the same fact, consumed together: the next wait has nothing owed.
     // (The same watch again: an unconsumed settle would be handed out a second time.)
-    const second = await waitForEvents(env.db, [], { ...opts, timeoutMs: 60 });
-    expect(second.event.kind).toBe("heartbeat");
+    await expect(waitForEvents(env.db, [], { ...opts, timeoutMs: 60 })).rejects.toBeInstanceOf(
+      WaitNothingError,
+    );
   });
 });
 
