@@ -1030,6 +1030,36 @@ describe("send --fresh", () => {
     expect(r.doc).toMatchObject({ error: "AgentExtensionOutdatedError", next: null });
   });
 
+  it("CLI: agent model to an extension without op model exits 4 (AgentExtensionOutdatedError)", async () => {
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%1",
+      cli: "pi",
+      command: "pi",
+      commandSource: "cli-key",
+      cwd: "/work/x",
+    });
+    // The release before `model`: every other op and feature, fenced.
+    const ops = helloReply().ops as string[];
+    const preModel = ops.filter((op) => op !== "model");
+    await serveExtension(sockFor("worker-1"), (req) =>
+      withHello(
+        req,
+        { v: 1, ok: false, error: `unknown op: ${String(req.op)}`, ops: preModel },
+        helloReply({ ops: preModel }),
+      ),
+    );
+    const r = await runCliJson(
+      ["agent", "model", "worker-1", "anthropic/claude-haiku-4-5", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(r.exitCode).toBe(4);
+    expect(r.doc).toMatchObject({ error: "AgentExtensionOutdatedError", next: null });
+    expect(r.doc.message).toMatch(/model/);
+    expect(received.map((q) => q.op)).toEqual(["model"]);
+  });
+
   it("refuses --fresh to a non-pi agent without pasting", async () => {
     seed("worker-1", "claude");
     await expect(

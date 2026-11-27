@@ -193,6 +193,7 @@ are re-export hubs.
 | `src/agent-output.ts` | the agent `--json` boundary (pure): `agentToOutput`, `liveAgentToOutput`, `closePreviewToOutput`. SQL column names, `id` = the registry incarnation, real `workstream_id`; live facts snake_cased and only when read. The CLI maps; `AgentRow` stays camelCase |
 | `src/agents/transport.ts` | `SendChannel` (the channel a send went through), the SDK's `sendViaTransport` (one `deliver` through the agent's channel) and `recordSend`, the `agent.send` audit op every delivery records |
 | `src/agents/abort.ts` | `abortAgent`, `interruptAgent` (`--interrupt`): the agent's channel's `abort` / `interrupt`, plus the `agent.abort` and `agent.send` ops |
+| `src/agents/model.ts` | `setAgentModel` (`SetModelResult`): the agent's channel's `model` (ctl only; else `AgentModelNeedsCtlError`), plus the `agent.model` op |
 | `src/agents/delegate.ts` | `delegateOutcome`: one wait result to `done` / `empty` / `error` / `died` / `timeout` / `pending` |
 | `src/agents/observe.ts` | `AgentObservation`: the one typed read of an agent (registry id + pane, ctl incarnation, settled run count, `settled`, text + `lastTextTruncated`, pending, source/since, session file); `observeAgentStates` (one `readAgentStates` pass), `settledCloseInput` (the `applySettledClose` input, undefined unless ctl-settled). A seam, not a second poll loop |
 | `src/agents/errors.ts` | typed agent errors |
@@ -322,6 +323,7 @@ are re-export hubs.
 | `src/cli/agent-close.ts` | `mu agent close`, recovery-aware scope (`closeScope`: live agent or recovery record) |
 | `src/cli/agent-collect.ts` | `mu agent collect` |
 | `src/cli/agent-answer.ts` | `mu agent answer` (`answerAgent`: keys for a pending permission dialog) |
+| `src/cli/agent-model.ts` | `mu agent model <name> <provider/id> [--effort <e>]` (`setAgentModel`), kept out of `src/cli/agents.ts` |
 | `src/cli/agent-reattach.ts` | `mu agent reattach`: bare preview (`next` = the `--if` apply), apply with SIGINT/SIGTERM → 130/143 |
 | `src/cli/agent-send.ts` | `mu agent send` (`cmdSend`): a prompt, command, steer or fresh session, `--interrupt`, and `--wait` for exactly the run it started |
 | `src/output-contract.ts` | the `--json` wire: `Envelope<T>` (`{ok,data,next}` / `{ok:false,error,message,next,exit}`), `NextPlan`, `encodeEnvelope`, `isEnvelope`. Pure. `cli.ts` `emitJson` wraps every payload once; `handle.ts` `emitError` prints the one failure document on stdout; both take `next` from `finalNext()` (the ONE finalisation: `computeNext` over the DB `handle()` holds, the verb's `setNextOutcome` and the scope `resolveWorkstream` records, fitted to the 4 KB result by `fitNext`; human text gets one dim `next:` line); `emitJsonRow` is the raw NDJSON row (`mu log --tail`, inert like an envelope). `extension/delegate.ts` `parseEnvelope` reads it |

@@ -115,6 +115,29 @@ describe("ctlProbe", () => {
     });
   });
 
+  it("carries status's model and thinkingLevel on an ok probe", async () => {
+    const p = await serve((line, sock) => {
+      const req = JSON.parse(line) as { op: string };
+      sock.end(
+        encode(
+          req.op === "hello"
+            ? { v: 1, ok: true }
+            : {
+                v: 1,
+                ok: true,
+                ...IDLE,
+                model: "anthropic/claude-haiku-4-5",
+                thinkingLevel: "high",
+              },
+        ),
+      );
+    });
+    expect(await ctlProbe(p)).toEqual({
+      kind: "ok",
+      status: { ...IDLE, model: "anthropic/claude-haiku-4-5", thinkingLevel: "high" },
+    });
+  });
+
   it("reports version for a reply without v", async () => {
     const p = await serve((_line, sock) => {
       sock.end(encode({ ok: true, ...IDLE }));

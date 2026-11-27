@@ -98,6 +98,7 @@ export {
   SpawnTrustDialogError,
 } from "./agents/errors.js";
 export { withAgentLock } from "./agents/lock.js";
+export { type SetModelResult, setAgentModel } from "./agents/model.js";
 export {
   type AgentObservation,
   type ObservedAgent,

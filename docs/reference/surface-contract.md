@@ -47,6 +47,12 @@ their guarantees:
   pointer after `session_start`, and its replay promotes an `unknown`
   receipt from the inbox. Spawn presets: `--model` and each harness's
   auto-approve and trust flags. `mu agent list` shows harness and channel.
+  On `ctl` (a pi agent), `mu agent model <name> <provider/id> [--effort <e>]`
+  switches the running session's model and thinking level through pi's
+  extension API (a busy turn keeps its model; the next model call uses the
+  new one) and reports the resulting `model` and `thinkingLevel`, which ctl
+  `status` also carries; any other channel refuses it (exit 2), and an
+  extension without the `model` op is `AgentExtensionOutdatedError` (exit 4).
 - **Executor.** `mu task auto` and `mu next` (`--dry`, `--hold`,
   `--workers`, `--refute`), `dispatch_host`.
 - **Delegates.** A `mu_delegate` call is a `kind=delegate` task with a
