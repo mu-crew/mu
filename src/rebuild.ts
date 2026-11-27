@@ -183,6 +183,9 @@ interface RawOpRow {
   op: string;
   payload: string;
   created_at: string;
+  actor_session: string | null;
+  actor_anchor: string | null;
+  actor_role: string | null;
 }
 
 export interface RebuildOptions {
@@ -249,7 +252,8 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
 
     const opRows = source
       .prepare(
-        `SELECT hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at
+        `SELECT hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at,
+                actor_session, actor_anchor, actor_role
            FROM ops`,
       )
       .all() as RawOpRow[];
@@ -317,8 +321,10 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
 
     const insertOp = target.prepare(
       `INSERT OR IGNORE INTO ops
-         (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
-       VALUES (@hlc, @machineId, @groupId, @actor, @intent, @entity, @key, @op, @payload, @createdAt)`,
+         (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at,
+          actor_session, actor_anchor, actor_role)
+       VALUES (@hlc, @machineId, @groupId, @actor, @intent, @entity, @key, @op, @payload, @createdAt,
+               @actorSession, @actorAnchor, @actorRole)`,
     );
     const insertPeer = target.prepare(
       `INSERT OR REPLACE INTO sync_peers (machine_id, last_applied_seq, last_seen_at)
@@ -355,6 +361,9 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
             op: row.op,
             payload: row.payload,
             createdAt: row.created_at,
+            actorSession: row.actor_session,
+            actorAnchor: row.actor_anchor,
+            actorRole: row.actor_role,
           });
           if (isProjectable(row.entity)) opsProjected += 1;
           else logOnlyByEntity[row.entity] = (logOnlyByEntity[row.entity] ?? 0) + 1;

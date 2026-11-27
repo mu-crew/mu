@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
-import { emitEvent } from "../src/logs.js";
+import { emitEvent, listSessionRoles } from "../src/logs.js";
 import {
   RebuildTargetExistsError,
   RebuildTargetIsSourceError,
@@ -21,6 +21,7 @@ import { addBlockEdge, removeBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 
 describe("rebuildInto", () => {
@@ -153,6 +154,31 @@ describe("rebuildInto", () => {
         conn.prepare("SELECT status FROM tasks WHERE local_id = 'a'").get(),
       );
       expect(row).toMatchObject({ status: "CLOSED" });
+    });
+
+    it("keeps each op's provenance (actor_session, actor_anchor, actor_role)", async () => {
+      await withEnv("MU_ACTOR_SESSION", "pi:sess-1", () =>
+        withEnv("MU_ACTOR_ANCHOR", "entry-1:tool-1", () =>
+          withEnv("MU_ORCHESTRATOR", "1", async () => {
+            ensureWorkstream(db, "demo");
+            addTask(db, { workstream: "demo", localId: "a", title: "A" });
+          }),
+        ),
+      );
+      const provenance = (conn: Db) =>
+        conn
+          .prepare("SELECT hlc, actor_session, actor_anchor, actor_role FROM ops ORDER BY hlc")
+          .all();
+      const before = provenance(db);
+      expect(before).toContainEqual(
+        expect.objectContaining({ actor_session: "pi:sess-1", actor_role: "orchestrator" }),
+      );
+      const path = targetPath();
+      rebuildInto(db, { targetPath: path });
+      expect(withTarget(path, provenance)).toEqual(before);
+      expect(withTarget(path, (conn) => listSessionRoles(conn).length)).toBe(
+        listSessionRoles(db).length,
+      );
     });
 
     it("rebuilds an empty DB without error", () => {
