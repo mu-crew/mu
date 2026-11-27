@@ -28,7 +28,7 @@ export interface LogRow {
   seq: number;
   /** `ops.key` verbatim: the natural key ('' = machine-wide, 'ws/task', 'ws/task#12', ...). */
   key: string;
-  /** Workstream this entry belongs to, or `null` for machine-wide. */
+  /** Real workstream name (the key's part before the first '/'), or `null` for machine-wide. */
   workstreamName: string | null;
   /** Free TEXT: agent name, "system", "user", or anything a caller picks.
    *  Captured ops that ran outside any actor context have no actor, and
@@ -321,11 +321,19 @@ function machineId(db: Db): string {
   return row?.machine_id ?? "unknown";
 }
 
+/** Workstream name of an `ops.key` ('' = machine-wide -> null). Keys look like
+ *  'ws', 'ws/task', 'ws/task#12', 'ws/a->ws/b': the name is the part before the first '/'. */
+export function workstreamOfKey(key: string | null): string | null {
+  if (!key) return null;
+  const i = key.indexOf("/");
+  return i < 0 ? key : key.slice(0, i);
+}
+
 function rowFromDb(row: RawLogRow): LogRow {
   return {
     seq: row.seq,
     key: row.workstream ?? MACHINE_WIDE_KEY,
-    workstreamName: row.workstream === MACHINE_WIDE_KEY ? null : row.workstream,
+    workstreamName: workstreamOfKey(row.workstream),
     source: row.source ?? "system",
     intent: row.intent,
     group: row.group_id,

@@ -68,6 +68,19 @@ describe("logs SDK", () => {
 
   // ─── listLogs ───────────────────────────────────────────────────────
 
+  it("workstreamName is the real workstream, key stays raw, machine-wide null", () => {
+    for (const ws of ["crew-rex/x#1", "crew-rex/a->crew-rex/b"]) {
+      appendLog(db, { workstream: ws, source: "u", payload: "p" });
+    }
+    appendLog(db, { workstream: null, source: "u", payload: "p" });
+    const rows = listLogs(db, {});
+    expect(rows.map((r) => [r.key, r.workstreamName])).toEqual([
+      ["crew-rex/x#1", "crew-rex"],
+      ["crew-rex/a->crew-rex/b", "crew-rex"],
+      ["", null],
+    ]);
+  });
+
   it("listLogs returns oldest-first", () => {
     appendLog(db, { workstream: "auth", source: "u", payload: "1" });
     appendLog(db, { workstream: "auth", source: "u", payload: "2" });

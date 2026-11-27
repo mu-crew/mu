@@ -12,6 +12,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Fixed
+
+- `LogRow.workstreamName` holds the real workstream name (the key's part before the first `/`), not the raw `ops.key`; `key` is unchanged.
+
 ## [5.7.0] — 2026-11-27
 
 ### Added
