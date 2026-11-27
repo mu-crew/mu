@@ -935,23 +935,32 @@ export function registerDelegate(
       // Without --cwd the pane inherits the mux session's start dir (wherever
       // the FIRST scratch spawn ran), and a missing dir silently becomes
       // $HOME: pin it to the caller's and check it exists.
-      let cwd: string | undefined;
-      if (req.workspace !== true) {
-        cwd = req.cwd ? req.cwd : (ctx?.cwd ?? process.cwd());
-        if (!isDir(cwd))
-          throw new SpawnFail(`mu_delegate: cwd ${cwd} is not a directory`, "unsent");
-      }
-      // Shut down before the spawn (a queued call drained while shutdown ran): no pane.
-      if (closed) throw new SpawnFail(`mu_delegate: ${SESSION_ENDED}`, "unsent");
+      const ended = () => new SpawnFail(`mu_delegate: ${SESSION_ENDED}`, "unsent");
       let spawned: Awaited<ReturnType<typeof spawn>>;
+      // Every refusal from here on goes through settleFailedStart: the call is
+      // already `starting`, and a throw past it would strand it there.
       try {
+        let cwd: string | undefined;
+        if (req.workspace !== true) {
+          cwd = req.cwd ? req.cwd : (ctx?.cwd ?? process.cwd());
+          if (!isDir(cwd))
+            throw new SpawnFail(`mu_delegate: cwd ${cwd} is not a directory`, "unsent");
+        }
+        // Shut down before the spawn (a queued call drained while shutdown ran): no pane.
+        if (closed) throw ended();
         spawned = await spawn(call, req.text, cwd, signal);
       } catch (e) {
-        if (e instanceof SpawnFail && e.kind === "nomux") {
+        // No mux: run it as a child process, unless shutdown ran during the probe.
+        if (e instanceof SpawnFail && e.kind === "nomux" && !closed) {
           freeSlot(); // startProcess counts it in inflight at once
           return startProcess(call);
         }
-        const fail = e instanceof SpawnFail ? e : new SpawnFail(errText(e), "unsent");
+        const fail =
+          e instanceof SpawnFail
+            ? e.kind === "nomux"
+              ? ended()
+              : e
+            : new SpawnFail(errText(e), "unsent");
         await settleFailedStart(call, fail);
         throw new Error(
           fail.kind === "unsent"

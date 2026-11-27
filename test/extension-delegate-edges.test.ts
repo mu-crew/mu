@@ -156,6 +156,64 @@ describe("shutdown while a queued call starts", () => {
     expect(p.sendMessage.mock.calls.length).toBe(sent);
   });
 
+  it("shut down while drain marked it starting: refused, never spawned", async () => {
+    process.env[key] = "1";
+    const mu = fakeMu();
+    // Hold the first mark to starting: drain's, for b (a registers already starting).
+    let marks = 0;
+    const h = holding(
+      mu,
+      (a) => a[0] === "delegates" && a[1] === "mark" && a[3] === "starting" && ++marks === 1,
+    );
+    const p = fakePi();
+    registerDelegate(p.pi, h.run);
+    await tool(p).execute("a", { task: "one", label: "a" }, undefined, undefined, ctx);
+    const queued = tool(p).execute("b", { task: "two", label: "b" }, undefined, undefined, ctx);
+    await ticks();
+    mu.waits.get("delegate-a")?.resolve(ok({ agents: [{ outcome: "done", lastText: "A" }] }));
+    await ticks();
+    expect(h.held()).toBe(true);
+    for (const s of p.shutdown) await s({ reason: "quit" }, { hasUI: false });
+    h.open();
+    await queued.catch(() => {});
+    await ticks();
+    expect(mu.calls.some((c) => c[1] === "spawn" && c[2] === "delegate-b")).toBe(false);
+    const b = listDelegates(mu.db).find((c) => c.request.label === "b");
+    expect(b?.state).toBe("refused");
+  });
+
+  it("shut down while the spawn found no mux: refused, no child process", async () => {
+    process.env[key] = "1";
+    const mu = fakeMu();
+    let spawns = 0;
+    const g = gate();
+    let ranProcess = false;
+    const run = (args: readonly string[], ...rest: unknown[]): Promise<MuResult> => {
+      if (args[0] === "delegates" && args[1] === "run") {
+        ranProcess = true;
+        return new Promise(() => {});
+      }
+      if (args[0] === "agent" && args[1] === "spawn" && ++spawns === 2)
+        return g.p.then(() => failed(5, "NoMultiplexerError", "no supported multiplexer found"));
+      return (mu.run as (...a: unknown[]) => Promise<MuResult>)(args, ...rest);
+    };
+    const p = fakePi();
+    registerDelegate(p.pi, run);
+    await tool(p).execute("a", { task: "one", label: "a" }, undefined, undefined, ctx);
+    const queued = tool(p).execute("b", { task: "two", label: "b" }, undefined, undefined, ctx);
+    await ticks();
+    mu.waits.get("delegate-a")?.resolve(ok({ agents: [{ outcome: "done", lastText: "A" }] }));
+    await ticks();
+    expect(spawns).toBe(2);
+    for (const s of p.shutdown) await s({ reason: "quit" }, { hasUI: false });
+    g.open();
+    await queued.catch(() => {});
+    await ticks();
+    expect(ranProcess).toBe(false);
+    const b = listDelegates(mu.db).find((c) => c.request.label === "b");
+    expect(b?.state).toBe("refused");
+  });
+
   it("shut down during its spawn: the pane is closed and the call cancelled", async () => {
     process.env[key] = "1";
     const mu = fakeMu();
