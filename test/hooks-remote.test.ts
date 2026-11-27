@@ -767,20 +767,22 @@ describe("a send that drew no hook event (a dialog took it)", () => {
       // codex, no row before its first prompt: the prompt's events are still on the node.
       await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
       const later = Date.now() + 60_000;
-      expect(await hookSilence(await target(), later)).toContain("no hook event");
+      expect(await hookSilence(await target(), later, 30_000)).toContain("no hook event");
       node.emit("session_start", { source: "startup" });
       node.emit("prompt_submitted");
       expect(node.pending()).toBe(2);
-      expect(await hookSilence(await target(), later)).toBeUndefined();
+      expect(await hookSilence(await target(), later, 30_000)).toBeUndefined();
       expect(node.pending()).toBe(0);
       // claude, a stopped row from its last turn: the next prompt's event is still on the node.
       node.emit("turn_stopped", { text: "done" });
       await (await target()).remote?.read();
       db.prepare("UPDATE agents SET cli = 'claude' WHERE name = 'cw'").run();
       await runCliJson(["agent", "send", "cw", "again", "-w", "auth", "--force", "--json"], dbPath);
-      expect(await hookSilence(await target(), Date.now() + 60_000)).toContain("no hook event");
+      expect(await hookSilence(await target(), Date.now() + 60_000, 30_000)).toContain(
+        "no hook event",
+      );
       node.emit("prompt_submitted");
-      expect(await hookSilence(await target(), Date.now() + 60_000)).toBeUndefined();
+      expect(await hookSilence(await target(), Date.now() + 60_000, 30_000)).toBeUndefined();
     });
   });
 
