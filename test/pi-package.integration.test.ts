@@ -13,6 +13,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -50,6 +51,18 @@ interface Loaded {
   factories: { path: string; tools: string[] }[];
   errors: unknown[];
 }
+
+describe.skipIf(!existsSync(built))("built extension bundle", () => {
+  it("imports only Node built-ins (no better-sqlite3)", () => {
+    const src = readFileSync(built, "utf8");
+    const specs = [...src.matchAll(/(?:^|\n)import\s[^;]*?from\s*"([^"]+)"|import\("([^"]+)"\)/g)]
+      .map((m) => m[1] ?? m[2])
+      .filter((s): s is string => s !== undefined);
+    expect(specs.length).toBeGreaterThan(0);
+    const builtin = new Set(builtinModules);
+    expect(specs.filter((s) => !s.startsWith("node:") && !builtin.has(s))).toEqual([]);
+  });
+});
 
 describe.skipIf(!ready)("pi package (real pi resolver + loader)", () => {
   let tmp: string;

@@ -135,13 +135,16 @@ describe("mu orchestrate", () => {
     expect(worker).toMatchObject({ MU_ACTOR_SESSION: "", MU_ACTOR_ANCHOR: "" });
     expect(delegateEnabled(worker)).toBe(false);
     expect(getAgent(db, "worker-1", "auth")?.spawner).toBe("auth/orchestrator-1");
+    const parentPi = { PI_SESSION_ID: "orch", PI_SESSION_FILE: "/tmp/orch.jsonl" };
     const child = delegateChildEnv(
-      { ...orch, ...actor },
+      { ...orch, ...actor, ...parentPi },
       { MU_MANAGED_AGENT: "1", MU_AGENT_NAME: "d1" },
     );
     expect(child.MU_ORCHESTRATOR).toBeUndefined();
     expect(child.MU_ACTOR_SESSION).toBeUndefined();
     expect(child.MU_ACTOR_ANCHOR).toBeUndefined();
+    expect(child.PI_SESSION_ID).toBeUndefined();
+    expect(child.PI_SESSION_FILE).toBeUndefined();
     expect(delegateEnabled(child)).toBe(false);
     // A remote pane unsets it too.
     expect(LOCAL_ONLY_ENV).toContain("MU_ORCHESTRATOR");

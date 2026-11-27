@@ -22,8 +22,9 @@ afterEach(() => {
   } catch {}
 });
 
-function cli(): MuRunner {
+function cli(inherited: Record<string, string> = {}): MuRunner {
   const env = {
+    ...inherited,
     MU_DB_PATH: join(dir, "mu.db"),
     MU_STATE_DIR: join(dir, "state"),
     MU_SYNC_DIR: "",
@@ -82,6 +83,39 @@ describe("withActor over the real CLI", () => {
         new Set(["delegate.register", "task.add"]),
       );
       for (const r of rows) expect(r).toMatchObject({ s: "pi:s-1", a: "a1:tc1" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a parent pi's inherited PI_SESSION_* never stands in for an unknown session or anchor", async () => {
+    const parentFile = join(dir, "parent.jsonl");
+    writeFileSync(
+      parentFile,
+      `${JSON.stringify({ type: "message", id: "p1", message: { role: "assistant", content: [] } })}\n`,
+    );
+    const inherited = { PI_SESSION_ID: "parent", PI_SESSION_FILE: parentFile };
+    // No session file yet: the session is known, the anchor is not.
+    const noFile = withActor(cli(inherited), () => ({ getSessionId: () => "s-2" }));
+    expect((await noFile(["task", "add", "t1", "--title", "T", "-w", "scratch"])).code).toBe(0);
+    // A stale ctx: neither is known.
+    const stale = withActor(cli(inherited), () => ({
+      getSessionId: () => {
+        throw new Error("stale ctx");
+      },
+    }));
+    expect((await stale(["task", "add", "t2", "--title", "T", "-w", "scratch"])).code).toBe(0);
+    const db = openDb({ path: join(dir, "mu.db") });
+    try {
+      const rows = db
+        .prepare(
+          "SELECT actor_session AS s, actor_anchor AS a FROM ops WHERE intent = 'task.add' ORDER BY seq",
+        )
+        .all();
+      expect(rows).toEqual([
+        { s: "pi:s-2", a: null },
+        { s: null, a: null },
+      ]);
     } finally {
       db.close();
     }

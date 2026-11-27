@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { helperPath } from "../src/helper-path.js";
-import { resolveProvenance } from "../src/provenance.js";
+import { resolveProvenance } from "../src/provenance-env.js";
 
 export type MuResult = { code: number; stdout: string; stderr: string };
 /** Per-call options. `env` is merged over this process's env for that child only
@@ -60,9 +60,13 @@ export type ActorSessionManager = {
  * `PI_SESSION_ID` only to its bash tool, so without this a mu the extension
  * runs records no session. Set as `MU_ACTOR_*`, never `PI_SESSION_ID`: that one
  * also names the caller of delegate calls and waits. Empty, not absent, so an
- * inherited stale value never wins (provenance reads `||`).
+ * inherited stale value never wins. An empty `MU_ACTOR_*` falls through (`||`)
+ * to `PI_SESSION_ID` / `PI_SESSION_FILE`, which this process inherited from
+ * whoever started pi (a parent pi's bash tool), so both are unset: an unknown
+ * session records none, never the parent's. A call that names its caller passes
+ * `PI_SESSION_ID` in its own `opts.env`, which wins.
  */
-export function actorEnv(sm: ActorSessionManager | undefined): Record<string, string> {
+export function actorEnv(sm: ActorSessionManager | undefined): Record<string, string | undefined> {
   let id: string | undefined;
   let file: string | undefined;
   try {
@@ -75,7 +79,12 @@ export function actorEnv(sm: ActorSessionManager | undefined): Record<string, st
     ...(id ? { PI_SESSION_ID: id } : {}),
     ...(file ? { PI_SESSION_FILE: file } : {}),
   });
-  return { MU_ACTOR_SESSION: prov.actorSession ?? "", MU_ACTOR_ANCHOR: prov.actorAnchor ?? "" };
+  return {
+    MU_ACTOR_SESSION: prov.actorSession ?? "",
+    MU_ACTOR_ANCHOR: prov.actorAnchor ?? "",
+    PI_SESSION_ID: undefined,
+    PI_SESSION_FILE: undefined,
+  };
 }
 
 /** `run` with the current pi session's provenance env under each call's own

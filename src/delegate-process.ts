@@ -143,13 +143,22 @@ export function delegateProcessPaths(
  * flag, and a delegate that kept it would see `mu_delegate` (spec D9). Nor the
  * caller's `MU_ACTOR_SESSION` / `MU_ACTOR_ANCHOR` (set by the extension that
  * ran it): they would credit the delegate's own ops to the caller's session.
+ * Nor `PI_SESSION_ID` / `PI_SESSION_FILE` (a caller's bash tool exports them):
+ * provenance falls back to them, and the child pi sets its own for its tools.
  */
 export function delegateChildEnv(
   parent: NodeJS.ProcessEnv,
   identity: Record<string, string>,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...parent, ...identity };
-  for (const key of ["MU_ORCHESTRATOR", "MU_ACTOR_SESSION", "MU_ACTOR_ANCHOR"]) delete env[key];
+  for (const key of [
+    "MU_ORCHESTRATOR",
+    "MU_ACTOR_SESSION",
+    "MU_ACTOR_ANCHOR",
+    "PI_SESSION_ID",
+    "PI_SESSION_FILE",
+  ])
+    delete env[key];
   return env;
 }
 

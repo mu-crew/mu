@@ -11,82 +11,10 @@
 // than inferred later from intents by a reader. Rex/tmux pane tags can read
 // the same function when they learn roles (ROADMAP rex-mu-role-parity).
 
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { type Db, prepareCached } from "./db.js";
+import { envActorSession } from "./provenance-env.js";
 
-export interface Provenance {
-  actorSession: string | null;
-  actorAnchor: string | null;
-}
-
-/** How much of a session file's tail is searched for the latest assistant entry. */
-const TAIL_BYTES = 64 * 1024;
-
-/** The tail of `path` as text, or null on any I/O error. */
-function readTail(path: string): string | null {
-  let fd: number | undefined;
-  try {
-    fd = openSync(path, "r");
-    const size = fstatSync(fd).size;
-    const len = Math.min(size, TAIL_BYTES);
-    const buf = Buffer.alloc(len);
-    const n = readSync(fd, buf, 0, len, size - len);
-    return buf.toString("utf8", 0, n);
-  } catch {
-    return null;
-  } finally {
-    if (fd !== undefined) {
-      try {
-        closeSync(fd);
-      } catch {}
-    }
-  }
-}
-
-/** `<entry id>[:<toolCallId>]` of the last assistant entry in a pi session file's tail. */
-function latestAssistantAnchor(sessionFile: string): string | null {
-  const tail = readTail(sessionFile);
-  if (tail === null) return null;
-  const lines = tail.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (line === undefined || !line.includes('"assistant"')) continue;
-    let entry: unknown;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue; // the tail's first line may be cut mid-entry
-    }
-    if (typeof entry !== "object" || entry === null) continue;
-    const { id, message } = entry as { id?: unknown; message?: unknown };
-    if (typeof id !== "string" || typeof message !== "object" || message === null) continue;
-    const { role, content } = message as { role?: unknown; content?: unknown };
-    if (role !== "assistant") continue;
-    const calls = Array.isArray(content)
-      ? content.filter(
-          (c): c is { type: "toolCall"; id: string } =>
-            typeof c === "object" && c !== null && (c as { type?: unknown }).type === "toolCall",
-        )
-      : [];
-    const only = calls.length === 1 ? calls[0] : undefined;
-    return only !== undefined && typeof only.id === "string" ? `${id}:${only.id}` : id;
-  }
-  return null;
-}
-
-/**
- * The provenance of the calling process, from its env: an explicit
- * `MU_ACTOR_SESSION` / `MU_ACTOR_ANCHOR` wins, else a pi session
- * (`pi:<PI_SESSION_ID>`, the latest assistant entry of `PI_SESSION_FILE`).
- */
-export function resolveProvenance(env: NodeJS.ProcessEnv = process.env): Provenance {
-  const actorSession =
-    env.MU_ACTOR_SESSION || (env.PI_SESSION_ID ? `pi:${env.PI_SESSION_ID}` : null);
-  const actorAnchor =
-    env.MU_ACTOR_ANCHOR ||
-    (env.PI_SESSION_FILE ? latestAssistantAnchor(env.PI_SESSION_FILE) : null);
-  return { actorSession: actorSession || null, actorAnchor: actorAnchor || null };
-}
+export { type Provenance, resolveProvenance } from "./provenance-env.js";
 
 /**
  * Synchronous actor identity for ops attribution: `$MU_AGENT_NAME` > `$USER` >
@@ -136,10 +64,6 @@ export interface ResolveActorRoleInput {
    * - `undefined`: defaults to `env`'s session (`MU_ACTOR_SESSION` / `pi:$PI_SESSION_ID`).
    */
   actorSession?: string | null | undefined;
-}
-
-function envActorSession(env: NodeJS.ProcessEnv): string | null {
-  return env.MU_ACTOR_SESSION || (env.PI_SESSION_ID ? `pi:${env.PI_SESSION_ID}` : null);
 }
 
 /**

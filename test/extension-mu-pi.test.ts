@@ -129,6 +129,12 @@ describe("mu pi extension", () => {
     await other.emit("agent_before_settle", { outcome: "completed" });
     const owned = calls.find((c) => c.args[0] === "task" && c.args[1] === "owned-by");
     expect(owned?.env).toMatchObject({ MU_ACTOR_SESSION: "pi:s-7", MU_ACTOR_ANCHOR: "" });
+    // An inherited (parent pi's) PI_SESSION_* is unset, so the empty anchor
+    // cannot fall back to the parent's session file.
+    expect(owned?.env && "PI_SESSION_ID" in owned.env).toBe(true);
+    expect(owned?.env?.PI_SESSION_ID).toBeUndefined();
+    expect(owned?.env && "PI_SESSION_FILE" in owned.env).toBe(true);
+    expect(owned?.env?.PI_SESSION_FILE).toBeUndefined();
   });
 
   it("serves hello and status after session_start, socket mode 0600", async () => {

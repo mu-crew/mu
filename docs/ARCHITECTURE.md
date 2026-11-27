@@ -108,7 +108,8 @@ are re-export hubs.
 | `src/compare.ts` | code-unit string compare; replaces `localeCompare` so ICU is never initialised |
 | `src/hlc.ts` | hybrid logical clock, serialized as sortable TEXT |
 | `src/capture.ts` | Triggers stored in the DB file (versioned by `capture_version`) recording each portable write as an op, refusing natural-key changes and explicit ids <= 0 or above 2^53-1; `installCapture` (own transaction) and `installCaptureLocked` (inside the caller's, used by `upgradeSchema`); `captureDoctorCheck` |
-| `src/provenance.ts` | `resolveProvenance(env)`: the session and assistant-turn anchor stamped on every op; `resolveActorRole`: its orchestrator/worker capacity |
+| `src/provenance.ts` | `resolveProvenance(env)` (re-exported): the session and assistant-turn anchor stamped on every op; `resolveActorRole`: its orchestrator/worker capacity |
+| `src/provenance-env.ts` | `resolveProvenance(env)` itself, DB-free so the standalone pi extension can import it |
 | `src/op-context.ts` | `withOpContext` (intent, actor, group) and the `withCaptureSuppressed` echo guard; both own the transaction around the `op_ctx` row |
 | `src/fold.ts` | the one definition of a portable row: pure per-key folds of the ops log (horizon, per-field LWW including `kind` and `wave`, substate, notes, edges, checks) |
 | `src/apply.ts` | apply one op: re-fold the keys it touches and make their rows equal the fold; `projectLog` folds every key |
