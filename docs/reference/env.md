@@ -11,6 +11,8 @@ milliseconds; `0` disables a wait unless noted.
 | --- | --- | --- |
 | `MU_DB_PATH` | SQLite file path. Wins over the state dir. | `<state-dir>/mu.db` |
 | `MU_STATE_DIR` | State directory. Also holds `compile-cache/` (V8 code cache for the CLI; `NODE_DISABLE_COMPILE_CACHE=1` turns it off). Set, it turns off the state import from mu 4's `mu-next`. | `$XDG_STATE_HOME/mu5` |
+| `MU_ALLOW_MIGRATE` | `1` lets a development build (below) upgrade the schema or capture stamp of your live DB (the default state dir's `mu.db`, however reached: defaults, `MU_DB_PATH` or `MU_STATE_DIR`) and flush its ops into `MU_SYNC_DIR`. Otherwise the upgrade is refused (`DevBuildMigrationError`, exit 4, nothing written) and the flush skipped (`DevBuildSyncError`; the ambient flush warns). Reads of an up-to-date DB still work. Spawned panes inherit a pinned `MU_DB_PATH`: isolate a branch build with `unset MU_DB_PATH MU_SYNC_DIR; export MU_STATE_DIR=$(mktemp -d)`. | unset |
+| `MU_DEV_BUILD` | `1` marks this mu a development build. Without it, a build counts as one when its code sits in a git checkout or worktree (a `.git` ancestor reached before any `node_modules`). | unset |
 | `XDG_STATE_HOME` | XDG state base; mu appends `mu5/` (mu 4 owns `mu-next/`, 3.x `mu/`, so no two majors share a DB). An empty or relative value is ignored. | `~/.local/state` |
 | `XDG_CACHE_HOME` | XDG cache base; mu appends `mu/`. Holds only disposable copies. An empty or relative value is ignored. | `~/.cache` |
 | `MU_SYNC_DIR` | Folder holding one segment per machine. This is the whole sync setup; there is no peer list. mu refuses (exit 4, nothing read or written) a folder holding a segment that opens with a v1 line, i.e. a 3.x peer: give it its own folder. | unset: sync off |

@@ -125,7 +125,12 @@ first.
   never written). Never run a development build
   against the real state directory: tests and manual runs use the state-dir
   override (`MU_STATE_DIR`, `MU_DB_PATH`, a blank `MU_SYNC_DIR`; for murmur,
-  `MURMUR_STATE_DIR`) and a private tmux socket.
+  `MURMUR_STATE_DIR`) and a private tmux socket. Workers and reviewers run
+  a branch build only after `unset MU_DB_PATH MU_SYNC_DIR; export
+  MU_STATE_DIR=$(mktemp -d)` in the same command: a spawned pane inherits
+  `MU_DB_PATH` pinned to the live DB, which wins over `MU_STATE_DIR`. A
+  branch build refuses to migrate or sync-publish the live DB
+  (`src/dev-build.ts`).
 
 ## Common tasks
 

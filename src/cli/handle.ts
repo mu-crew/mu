@@ -87,6 +87,7 @@ import {
   DelegateNotFoundError,
   DelegateStateError,
 } from "../delegates.js";
+import { DevBuildMigrationError, DevBuildSyncError } from "../dev-build.js";
 import { DriftDetectedError } from "../drift.js";
 import { editDistance } from "../edit-distance.js";
 import { DeliveryResolvingError, EffectHeldError } from "../effects.js";
@@ -596,6 +597,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof ClaimerNotRegisteredError ||
     err instanceof SchemaTooOldError ||
     err instanceof SchemaTooNewError ||
+    err instanceof DevBuildMigrationError ||
+    err instanceof DevBuildSyncError ||
     err instanceof SqliteTooOldError ||
     err instanceof RemoteWorkspaceDbError ||
     err instanceof StateImportPendingError ||

@@ -76,6 +76,7 @@ import { isMainThread } from "node:worker_threads";
 import { applyOp, type Op, OpEntityNotSyncedError } from "./apply.js";
 import { compareStrings } from "./compare.js";
 import { type Db, prepareCached, SYNCED_ENTITIES } from "./db.js";
+import { refuseDevBuildSync } from "./dev-build.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { receiveHlc } from "./hlc.js";
 import {
@@ -352,6 +353,11 @@ export async function flushSegment(
       };
     }
   }
+
+  // A branch build must not publish the live DB's ops (src/dev-build.ts):
+  // they stay pending for the installed mu. Past the no-op, so a verb with
+  // nothing to publish does not warn.
+  refuseDevBuildSync(db.name, dir);
 
   // Serialise concurrent local flushes so two processes cannot interleave
   // partial lines in the same file. Keyed on the sync dir + machine, since

@@ -294,6 +294,7 @@ are re-export hubs.
 | Module | Responsibility |
 | --- | --- |
 | `src/main.ts` | the `mu` bin (`dist/cli.js`): enables the compile cache, then `import()`s `src/cli.ts` |
+| `src/dev-build.ts` | the dev-build guard: a build in a git checkout refuses to upgrade the user's live DB (openDb, `DevBuildMigrationError`) or flush its ops to `MU_SYNC_DIR` (flushSegment, `DevBuildSyncError`), keyed on the resolved DB path, unless `MU_ALLOW_MIGRATE=1` |
 | `src/compile-cache.ts`, `src/state-dir.ts` | best-effort V8 compile cache under `<state>/compile-cache`; builtins-only state-dir resolution (default `<state home>/mu5`), the state import's paths and `StateImportPendingError` |
 | `src/state-import.ts` | the **state import** (spec D5): mu 5's one-shot copy of mu 4's `mu-next/mu.db` into `mu5/mu.db` under the strict lock `mu5/locks/import` (backup API, new `machine_id`, v13 completion, the snapshot checks and the 13 → 14 step, no-replace link); `handle()` and the Stop hook run `importStateIfDue` before `openDb`; a leaf nothing in `db.ts` imports |
 | `src/cli.ts` | Commander wiring (`buildProgram`, `runCli`) |

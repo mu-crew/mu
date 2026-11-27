@@ -72,6 +72,7 @@ import {
   READY_VIEW_SQL,
   V13,
 } from "./db-schema.js";
+import { refuseDevBuildMigration } from "./dev-build.js";
 import { say } from "./messages.js";
 import { defaultStateDir, refusePendingStateImport, xdgStateHome } from "./state-dir.js";
 import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
@@ -209,21 +210,28 @@ export function openDb(options: OpenDbOptions = {}): Db {
     }))();
     try {
       refuseUnusableStamps(detectedVersion, detectedCapture);
-      setWalMode(db);
-      db.pragma("foreign_keys = ON");
       // Skip the DDL write transaction when the DB already matches this
       // build (schema, capture stamp and stored triggers): the upgrade
       // takes the write lock and rewrites the views, which bumps the
       // schema cookie on every open, so every `mu` call, reads included,
       // queued behind any writer and forced every other connection to
       // re-parse the schema (f_opendb_schema_write).
-      if (
+      const needsUpgrade =
         detectedVersion !== CURRENT_SCHEMA_VERSION ||
         detectedCapture !== CAPTURE_VERSION ||
-        !schemaIsCurrent(db)
-      ) {
-        upgradeSchema(db);
+        !schemaIsCurrent(db);
+      // A branch build must not migrate the live DB (src/dev-build.ts);
+      // decided before WAL mode or any DDL touches the file.
+      if (needsUpgrade) {
+        refuseDevBuildMigration(
+          path,
+          `schema ${detectedVersion ?? "none"} capture ${detectedCapture ?? "none"}`,
+          `schema ${CURRENT_SCHEMA_VERSION} capture ${CAPTURE_VERSION}`,
+        );
       }
+      setWalMode(db);
+      db.pragma("foreign_keys = ON");
+      if (needsUpgrade) upgradeSchema(db);
       seedMachineIdentity(db);
     } catch (err) {
       closeQuietly(db);

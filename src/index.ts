@@ -259,6 +259,7 @@ export {
   type VerdictTally,
   verdictTally,
 } from "./delegates.js";
+export { DevBuildMigrationError, DevBuildSyncError } from "./dev-build.js";
 export type {
   DoctorCheck,
   DoctorStatus,
