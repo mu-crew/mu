@@ -4,8 +4,9 @@
 // test/tmux.integration.test.ts.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { vtmuxPaneStatus } from "../src/jobs/view.js";
 import { TmuxPaneBirthError } from "../src/mux/pane-ref.js";
-import { attachShellLine } from "../src/mux.js";
+import { attachShellLine, tmuxBackend } from "../src/mux.js";
 import {
   assertValidPaneId,
   attachCommands,
@@ -18,6 +19,7 @@ import {
   PANE_ID_RE,
   paneAlive,
   paneResult,
+  paneStatus,
   resetSleep,
   resetTmuxExecutor,
   setSleepForTests,
@@ -30,7 +32,7 @@ import {
   tmuxAttachMode,
 } from "../src/tmux.js";
 import { fakePane } from "./_mux.js";
-import { withServerIdentity } from "./_verbs-mock.js";
+import { FAKE_SERVER_IDENTITY, withServerIdentity } from "./_verbs-mock.js";
 
 // ─── Mock executor harness ────────────────────────────────────────────
 
@@ -766,5 +768,25 @@ describe("attachCommands", () => {
     expect(await attachCommands({ session: "mu-a" })).toEqual([
       { command: "tmux", args: ["attach-session", "-t", "=mu-a:"] },
     ]);
+  });
+});
+
+describe("paneStatus fencing", () => {
+  const vtmux = (): TmuxExecResult => ok("3.6|on|working|agent||working|0");
+  it("reads a verified pane on its own server", async () => {
+    setTmuxExecutor(withServerIdentity(async () => vtmux()));
+    expect(await paneStatus(fakePane("%15"))).toBe("busy");
+  });
+
+  it("reports nothing for a verified pane when another server answers (a recycled %N)", async () => {
+    setTmuxExecutor(withServerIdentity(async () => vtmux(), "9999|1800000000"));
+    expect(await paneStatus(fakePane("%15"))).toBeUndefined();
+  });
+
+  it("vtmuxPaneStatus fences a row's pane to its recorded server", async () => {
+    setTmuxExecutor(withServerIdentity(async () => vtmux(), "9999|1800000000"));
+    expect(await vtmuxPaneStatus(tmuxBackend, "%15", FAKE_SERVER_IDENTITY)).toBeUndefined();
+    // A legacy row (no identity) still reads the bare id, as before the column.
+    expect(await vtmuxPaneStatus(tmuxBackend, "%15")).toBe("busy");
   });
 });

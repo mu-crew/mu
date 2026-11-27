@@ -133,7 +133,7 @@ export async function hooksRunSince(
     const r = await t.remote.read({});
     if (!r.ok) return { state: "unreachable", reason: `its host was not read: ${r.reason}` };
   }
-  const pane = await readHooksPane(t.agent.paneId);
+  const pane = await readHooksPane(t.agent.paneId, t.agent.paneIdentity);
   if (pane === undefined) return { state: "unreachable", reason: "murmur pane did not answer" };
   if (pane.activity === null || pane.runCount === null || pane.runCount < 1) {
     return { state: "none" };
@@ -168,7 +168,7 @@ export interface HooksTurnFailure {
  * reach it through a wait's reads). Never throws.
  */
 export async function hooksTurnFailure(t: ChannelTarget): Promise<HooksTurnFailure | undefined> {
-  const pane = await readHooksPane(t.agent.paneId);
+  const pane = await readHooksPane(t.agent.paneId, t.agent.paneIdentity);
   if (pane === undefined || pane.activity !== "stopped" || pane.blocked !== null) return undefined;
   if (pane.error === null || pane.errorAt === null || pane.updatedAt === null) return undefined;
   if (pane.errorAt < pane.updatedAt) return undefined;
@@ -189,7 +189,7 @@ export async function hooksTurnFailure(t: ChannelTarget): Promise<HooksTurnFailu
  */
 export async function acknowledgeTurnFailure(t: ChannelTarget): Promise<boolean> {
   await clearPaneAttention(t.agent.paneId);
-  const pane = await readHooksPane(t.agent.paneId);
+  const pane = await readHooksPane(t.agent.paneId, t.agent.paneIdentity);
   return (
     pane !== undefined &&
     pane.error === null &&

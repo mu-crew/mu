@@ -452,7 +452,7 @@ export interface MuxBackend {
   /** The pane's runtime state as the mux itself reports it, or undefined
    *  when the pane is gone or unclassified. vtmux and Rex (the program's
    *  OSC 7501 report): for non-pi agents. */
-  paneStatus?(paneId: string): Promise<MuxPaneStatus | undefined>;
+  paneStatus?(pane: string | VerifiedPaneRef): Promise<MuxPaneStatus | undefined>;
   /** tmux and Rex: whether the pane runs, exited (a retained pane: `retainOnExit`)
    *  or is gone. Unlike `paneAlive` (handle existence), an exited pane is NOT
    *  running here. Throws when the probe itself fails: unknown, never a result. */

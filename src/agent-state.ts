@@ -560,7 +560,7 @@ export async function readBaseStates(
     // Stock tmux (and vtmux with the status off) never pays the per-pane probe.
     if (livenessOnly.has(agentKey(agent)) || seen.state !== "present" || !seen.vtmuxStatus)
       continue;
-    const state = await vtmuxPaneStatus(mux, agent.paneId);
+    const state = await vtmuxPaneStatus(mux, agent.paneId, agent.paneIdentity);
     if (state !== undefined) {
       vtmuxReadings.set(agentKey(agent), { state, source: "tmux", since: null, alive: true });
     }

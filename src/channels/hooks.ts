@@ -161,7 +161,7 @@ async function awaitsFirstPrompt(t: DeliveryTarget, pane: HooksPane | undefined)
     return false;
   }
   if (t.remote === undefined && !murmurAvailable(harness)) return false;
-  return (await paneUp(t.agent.paneId)) === true;
+  return (await paneUp(t.agent.paneId, t.agent.paneIdentity)) === true;
 }
 
 /**

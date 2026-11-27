@@ -263,9 +263,11 @@ export function viewsReportStatus(mux: MuxBackend): boolean {
 export async function vtmuxPaneStatus(
   mux: MuxBackend,
   paneId: string,
+  identity?: string | null,
 ): Promise<MuxPaneStatus | undefined> {
   try {
-    return await mux.paneStatus?.(paneId);
+    // Fenced to the row's server when it recorded one: a recycled `%N` is another's pane.
+    return await mux.paneStatus?.(probeRef(mux, paneId, identity));
   } catch {
     return undefined;
   }

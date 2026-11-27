@@ -38,7 +38,7 @@ export async function hookSilence(
     const read = await t.remote.read({ budgetMs });
     if (!read.ok) return undefined;
   }
-  const pane = await readHooksPane(agent.paneId);
+  const pane = await readHooksPane(agent.paneId, agent.paneIdentity);
   if (pane === undefined) return undefined;
   if (pane.activity !== null) {
     if (pane.activity === "running" || pane.blocked !== null) return undefined;

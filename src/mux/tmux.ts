@@ -717,15 +717,19 @@ export async function paneResult(ref: string | VerifiedPaneRef): Promise<PaneRes
  * sub-tool's record wins the summary (`pane_program_id` set), the root's own
  * state is read and its kind is unknown.
  */
-export async function paneStatus(paneId: string): Promise<MuxPaneStatus | undefined> {
-  if (!isValidPaneId(paneId)) return undefined;
-  const result = await execOnPane(paneId, (id) => [
+export async function paneStatus(
+  ref: string | VerifiedPaneRef,
+): Promise<MuxPaneStatus | undefined> {
+  if (typeof ref === "string" && !isValidPaneId(ref)) return undefined;
+  const result = await execOnPane(ref, (id) => [
     "display-message",
     "-t",
     id,
     "-p",
     "#{vtmux_version}|#{vtmux-program-status}|#{pane_program_state}|#{pane_program_kind}|#{pane_program_id}|#{pane_program_root_state}|#{pane_program_state_time}",
   ]);
+  // Another server holds the id now: its pane is not the row's, and reports nothing for it.
+  if (result.foreign) return undefined;
   if (result.exitCode !== 0) {
     if (/can't find pane|pane not found|no current target/i.test(result.stderr)) return undefined;
     if (NO_SERVER_RE.test(result.stderr)) return undefined;

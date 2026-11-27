@@ -246,7 +246,10 @@ export function parseHooksPane(stdout: string): HooksPane | undefined {
 }
 
 /** Drain and read one pane; undefined when murmur does not answer. */
-export async function readHooksPane(paneId: string): Promise<HooksPane | undefined> {
+export async function readHooksPane(
+  paneId: string,
+  identity?: string | null,
+): Promise<HooksPane | undefined> {
   let stdout: string | null;
   try {
     stdout = await (runnerForTests ?? defaultRunner)(paneId);
@@ -254,7 +257,7 @@ export async function readHooksPane(paneId: string): Promise<HooksPane | undefin
     stdout = null;
   }
   if (stdout !== null) return parseHooksPane(stdout);
-  return await vtmuxHooksPane(paneId);
+  return await vtmuxHooksPane(paneId, identity);
 }
 
 /**
@@ -262,10 +265,13 @@ export async function readHooksPane(paneId: string): Promise<HooksPane | undefin
  * natively (OSC 7501): enough for the send gate (blocked / running / sendable). It carries no
  * session or run count, so no paste is ever confirmed (it reports `unknown`, never resent).
  */
-async function vtmuxHooksPane(paneId: string): Promise<HooksPane | undefined> {
+async function vtmuxHooksPane(
+  paneId: string,
+  identity?: string | null,
+): Promise<HooksPane | undefined> {
   let status: Awaited<ReturnType<typeof vtmuxPaneStatus>>;
   try {
-    status = await vtmuxPaneStatus(await activeMux(), paneId);
+    status = await vtmuxPaneStatus(await activeMux(), paneId, identity);
   } catch {
     return undefined;
   }

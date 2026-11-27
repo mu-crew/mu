@@ -254,7 +254,7 @@ async function ctlFailure(
   // A request that was WRITTEN before the pane died may still have landed:
   // the error keeps its msgId as that evidence (a dead pane does not prove
   // the prompt was never delivered).
-  if (await paneGone(agent.paneId)) {
+  if (await paneGone(agent.paneId, agent.paneIdentity)) {
     return new AgentPaneDeadError(
       agent.name,
       agent.workstreamName,
@@ -349,9 +349,10 @@ async function ctlSendWithReceipt(
 }
 
 /** True only when the mux positively reports the pane gone (a mux error is "unknown"). */
-async function paneGone(paneId: string): Promise<boolean> {
+async function paneGone(paneId: string, identity?: string | null): Promise<boolean> {
   try {
-    return !(await viewPresent(paneId));
+    // Fenced to the row's server: a recycled `%N` on a restarted server is not the agent's.
+    return !(await viewPresent(paneId, undefined, identity));
   } catch {
     return false;
   }
