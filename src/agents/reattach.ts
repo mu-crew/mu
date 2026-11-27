@@ -14,7 +14,7 @@ import { leaseJobRef, leaseKind } from "../jobs/lease.js";
 import type { JobRef } from "../jobs/types.js";
 import { birthIdentity, killView, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
-import { markPaneHost } from "../mux/types.js";
+import { crewPaneOptions, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { deleteRemoteRecovery, restoreRemoteRecovery } from "../remote-recovery.js";
 import { assertRevision } from "../revision.js";
@@ -78,6 +78,7 @@ export async function reattachAgent(
   if (!mux.carrierViews) await plan(db, ws, name);
   const sock = ctlSocketPath(ws, name, dirname(db.name));
   const session = `mu-${ws}`;
+  let tagWarning: string | undefined;
   const { p, pid, row, born } = await withAgentLock(db, ws, name, () =>
     withSpawnLock(session, async () => {
       const { p, revision } = await planSnapshot(db, ws, name);
@@ -117,7 +118,12 @@ export async function reattachAgent(
       });
       const done = mux.spawnAgent({
         ...{ session, window: name, name, cli: "pi", env, onPaneCreated },
-        ...{ command: leaseKind.attach(p.profile, a), commandSource: "cli-key" },
+        command: leaseKind.attach(p.profile, a),
+        // As spawn: the crew tags, so murmur never shows the carrier as a human pane.
+        paneOptions: crewPaneOptions({ agent: name, workstream: ws, role: "worker" }),
+        onTagFailure: (w) => {
+          tagWarning = w;
+        },
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
@@ -203,7 +209,11 @@ export async function reattachAgent(
         claims.push({ task, ok: false, error: e instanceof Error ? e.message : `${e}` }),
     );
   }
-  return { ...factsOf(ws, p), agent_id: row, pane_id: pid, ready, ctl, claims };
+  return {
+    ...factsOf(ws, p),
+    ...{ agent_id: row, pane_id: pid, ready, ctl, claims },
+    ...(tagWarning !== undefined ? { tagWarning } : {}),
+  };
 }
 export type ReattachResult = Awaited<ReturnType<typeof reattachAgent>>;
 

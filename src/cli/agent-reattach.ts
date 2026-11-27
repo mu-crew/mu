@@ -60,6 +60,7 @@ export function wireReattachCommand(agent: Command): void {
         if (opts.json) return cli.emitJson(r);
         console.log(`Reattached ${pc.bold(name)} (job ${r.job} on ${r.host}, pane ${r.pane_id})`);
         if (!r.ready) console.error(pc.yellow(`warning: ctl ${r.ctl}: the pane holds the job`));
+        if (r.tagWarning !== undefined) console.error(pc.yellow(`warning: ${r.tagWarning}`));
         for (const c of r.claims) {
           if (c.ok) console.log(`Claimed ${c.task}`);
           else console.error(pc.yellow(`warning: ${c.task} not claimed: ${c.error}`));

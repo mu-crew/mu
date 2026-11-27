@@ -311,6 +311,9 @@ describe("happy path", () => {
     const pane = mux.calls.find(isPaneCall)?.at(-1) ?? "";
     expect(pane).toContain(`--attach '"'"'job-1'"'"'`);
     expect(pane).toContain(`--job-file '"'"'${jobFile()}'"'"'`);
+    // The carrier carries the crew tags, as at spawn: murmur never shows it as a human pane.
+    expect(mux.calls.flat()).toEqual(expect.arrayContaining(["@mu_agent", "worker-1"]));
+    expect(mux.calls.flat()).toContain("@mu_role");
     const said = listLogs(db, { workstream: "auth" }).map((l) => [l.intent, l.payload]);
     expect(said).toContainEqual([
       "agent.reattach",

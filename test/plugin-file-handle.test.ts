@@ -41,7 +41,12 @@ function views(o: { handle?: string; dies?: boolean } = {}): void {
   h.stubMux({
     spawnAgent: async (s) => {
       const id = `%${++n}`;
-      if (o.dies !== true) h.panes.set(id, { command: s.command });
+      if (o.dies !== true) {
+        h.panes.set(id, {
+          command: s.command,
+          ...(s.paneOptions ? { paneOptions: s.paneOptions } : {}),
+        });
+      }
       if (o.handle !== undefined) writeFileSync(jobFile(), `${o.handle}\n`);
       s.onPaneCreated?.(id, FAKE_SERVER_IDENTITY);
       return id;
@@ -517,6 +522,12 @@ describe("a bound file kind whose view died while its job runs", () => {
     expect(attach?.params.jobFile).toBe(jobFile());
     expect(handleOf(attach)).toBe("file-job-1");
     expect(r.pane_id).not.toBe(a.paneId);
+    // The new view carries the crew tags, as at spawn: murmur never shows it as a human pane.
+    expect(h.panes.get(r.pane_id)?.paneOptions).toEqual({
+      "@mu_agent": "w1",
+      "@mu_workstream": "ws",
+      "@mu_role": "worker",
+    });
     expect(getAgent(h.db, "w1", "ws")).toMatchObject({
       paneId: r.pane_id,
       incarnation: a.incarnation,

@@ -41,7 +41,7 @@ export interface PluginHost {
   dir: string;
   f: FakePlugin;
   /** The views the stub opened, by pane id (deleted when killed). */
-  panes: Map<string, { command: string }>;
+  panes: Map<string, { command: string; paneOptions?: Record<string, string> }>;
   /** The fake backend's stops counted at each kill: a detached close stops first. */
   stopsAtKill: number[];
   stubMux(over?: Partial<MuxBackend>): void;
@@ -68,7 +68,10 @@ export function pluginHostFixture(opts: { handshakeInProcess?: boolean } = {}): 
       ensureSession: async () => ({ created: false }) as never,
       spawnAgent: async (o) => {
         const id = `%${++n}`;
-        h.panes.set(id, { command: o.command });
+        h.panes.set(id, {
+          command: o.command,
+          ...(o.paneOptions ? { paneOptions: o.paneOptions } : {}),
+        });
         o.onPaneCreated?.(id, FAKE_SERVER_IDENTITY);
         return id;
       },

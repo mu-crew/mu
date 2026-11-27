@@ -26,7 +26,7 @@ import {
   viewRef,
 } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
-import { type MuxBackend, markPaneHost } from "../mux/types.js";
+import { crewPaneOptions, type MuxBackend, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { PluginCallError } from "../plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "../plugins/job.js";
@@ -171,6 +171,7 @@ export async function reattachView(
   const sock = ctlSocketPath(ws, name, dirname(db.name));
   const row = getAgent(db, name, ws);
   const onCtl = row !== undefined && expectsCtl(row, sock);
+  let tagWarning: string | undefined;
   const { d, pid, born } = await withAgentLock(db, ws, name, () =>
     withSpawnLock(session, async () => {
       const d = viewJob(db, ws, name);
@@ -242,6 +243,10 @@ export async function reattachView(
         command: viewLine(view.command, d.kind.caps.channel === undefined),
         ...(view.cwd !== undefined ? { cwd: view.cwd } : {}),
         env: view.env,
+        paneOptions: crewPaneOptions({ agent: name, workstream: ws, role: "worker" }),
+        onTagFailure: (w) => {
+          tagWarning = w;
+        },
         onPaneCreated: (id, identity) => {
           born = identity;
           onCreated(id);
@@ -320,7 +325,11 @@ export async function reattachView(
     "agent.reattach",
     `agent reattach ${name} (host=${d.r.host}, job=${d.r.job}, pane=${pid}, view, ctl=${ctl})`,
   );
-  return { ...facts(ws, d), agent_id: d.agentId, pane_id: pid, ready, ctl, claims: [] };
+  return {
+    ...facts(ws, d),
+    ...{ agent_id: d.agentId, pane_id: pid, ready, ctl, claims: [] },
+    ...(tagWarning !== undefined ? { tagWarning } : {}),
+  };
 }
 
 class ViewGone extends Error {}
