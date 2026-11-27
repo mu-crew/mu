@@ -9,7 +9,7 @@ import type { Db } from "../db.js";
 import type { DoctorCheck } from "../doctor-summary.js";
 import { rowRef } from "../jobs/view.js";
 import { say } from "../messages.js";
-import { isRetiredPane } from "../mux/binding.js";
+import { foreignBackend, isRetiredPane } from "../mux/binding.js";
 import { CREW_ROLES, type CrewIdentity, type CrewTags, type MuxBackend } from "../mux/types.js";
 
 /** One live agent's pane whose crew identity is not what murmur needs. */
@@ -24,29 +24,48 @@ export interface CrewTagProblem {
   sessionWrong: boolean;
 }
 
-/** Whether `agent`'s recorded pane is the one `have` was read from (tmux: same server). */
-function samePane(agent: AgentRow, have: CrewTags): boolean {
-  return (
-    have.server === undefined ||
-    agent.paneIdentity === undefined ||
-    have.server === agent.paneIdentity
-  );
+/** Where an agent row's pane stands for a tag read or write on the active backend. */
+export type PaneStanding =
+  | { kind: "retired" } // a retired backend's pane (herdr): never live, never dead
+  | { kind: "foreign" } // another live backend's pane
+  | { kind: "gone" } // no pane by that id on this server, or another server's pane
+  | { kind: "unverified"; have: CrewTags } // legacy tmux row: no recorded server to match
+  | { kind: "live"; have: CrewTags };
+
+/**
+ * Classify `agent`'s pane against one batched read. A tmux pane id restarts per server, so a
+ * row with no recorded server (`pane_identity`, a legacy row) cannot claim the `%N` it sees:
+ * that pane may be another server's. It reads as `unverified`, never compared or written.
+ */
+export function paneStanding(
+  mux: Pick<MuxBackend, "name" | "isValidPaneId">,
+  agent: AgentRow,
+  tags: ReadonlyMap<string, CrewTags>,
+): PaneStanding {
+  if (isRetiredPane(agent.paneId)) return { kind: "retired" };
+  if (foreignBackend(agent.paneId, mux.name) !== undefined) return { kind: "foreign" };
+  if (!mux.isValidPaneId(agent.paneId)) return { kind: "gone" };
+  const have = tags.get(agent.paneId);
+  if (have === undefined) return { kind: "gone" };
+  if (mux.name === "tmux" && agent.paneIdentity === undefined) return { kind: "unverified", have };
+  if (have.server !== undefined && have.server !== agent.paneIdentity) return { kind: "gone" };
+  return { kind: "live", have };
 }
 
 const shown = (v: string): string => (v === "" ? "unset" : JSON.stringify(v));
 
 /** The live agents among `agents` whose pane (in `tags`) carries a wrong crew identity. Pure. */
 export function crewTagProblems(
-  mux: Pick<MuxBackend, "isValidPaneId">,
+  mux: Pick<MuxBackend, "name" | "isValidPaneId">,
   agents: readonly AgentRow[],
   tags: ReadonlyMap<string, CrewTags>,
 ): CrewTagProblem[] {
   const problems: CrewTagProblem[] = [];
   for (const agent of agents) {
-    if (isRetiredPane(agent.paneId) || !mux.isValidPaneId(agent.paneId)) continue;
-    const have = tags.get(agent.paneId);
-    // Gone (or another server's pane under the same id): reconcile's business, not a tag's.
-    if (have === undefined || !samePane(agent, have)) continue;
+    // Gone, foreign, retired or unverified: reconcile's business (or a respawn's), not a tag's.
+    const standing = paneStanding(mux, agent, tags);
+    if (standing.kind !== "live") continue;
+    const have = standing.have;
     const role = have.role;
     const roleOk = role === undefined || (CREW_ROLES as readonly string[]).includes(role);
     const want: CrewIdentity = {
@@ -74,6 +93,8 @@ export function crewTagProblems(
 export interface CrewTagsReport {
   check: DoctorCheck;
   problems: CrewTagProblem[];
+  /** Legacy tmux rows (no recorded server) whose `%N` exists here: not checked. */
+  unverified: string[];
   /** One warning line per problem. */
   lines: string[];
 }
@@ -98,6 +119,7 @@ export async function crewTagsDoctorCheck(db: Db, mux: MuxBackend): Promise<Crew
     return {
       check: { name: "crew-tags", status: "ok", detail: `not checked on ${mux.name}` },
       problems: [],
+      unverified: [],
       lines: [],
     };
   }
@@ -109,30 +131,56 @@ export async function crewTagsDoctorCheck(db: Db, mux: MuxBackend): Promise<Crew
     return {
       check: { name: "crew-tags", status: "warn", detail: `unreadable: ${why}` },
       problems: [],
+      unverified: [],
       lines: [],
     };
   }
-  const problems = crewTagProblems(mux, listAgents(db), tags);
+  const agents = listAgents(db);
+  const problems = crewTagProblems(mux, agents, tags);
+  const unverified = agents
+    .filter((a) => paneStanding(mux, a, tags).kind === "unverified")
+    .map((a) => `${a.workstreamName}/${a.name}`);
   const lines = problems.map(crewTagLine);
+  const skipped =
+    unverified.length === 0
+      ? ""
+      : `; ${unverified.length} unverified (${say("agent.crew_tags_unverified")}): ${unverified.join(", ")}`;
   const check: DoctorCheck =
     problems.length === 0
-      ? { name: "crew-tags", status: "ok", detail: "every live agent's pane names its agent" }
+      ? {
+          name: "crew-tags",
+          status: "ok",
+          detail: `every live agent's pane names its agent${skipped}`,
+        }
       : {
           name: "crew-tags",
           status: "warn",
-          detail: `${problems.length} agent pane${problems.length === 1 ? "" : "s"} untagged (murmur shows them as human); fix: mu agent retag`,
+          detail: `${problems.length} agent pane${problems.length === 1 ? "" : "s"} untagged (murmur shows them as human); fix: mu agent retag${skipped}`,
         };
-  return { check, problems, lines };
+  return { check, problems, unverified, lines };
 }
 
 /** What `mu agent retag` did to one agent. */
 export interface RetagResult {
   name: string;
   workstream: string;
-  paneId: string;
-  /** `changed`: written now; `ok`: already right; `gone`: no live pane; `failed`: the write threw;
-   *  `partial`: the block label is written, the Rex session label still is not `mu-<ws>`. */
-  status: "changed" | "ok" | "gone" | "failed" | "partial";
+  /** Absent for `not_found`. */
+  paneId?: string;
+  /** `changed`: written now; `ok`: already right; `failed`: the write threw;
+   *  `partial`: the block label is written, the Rex session label still is not `mu-<ws>`;
+   *  never written: `gone` (no live pane), `retired` (a herdr pane), `foreign` (another
+   *  backend's pane), `unverified` (a legacy tmux row: no recorded server, so its `%N` may be
+   *  another server's; respawn it), `not_found` (a requested name with no row). */
+  status:
+    | "changed"
+    | "ok"
+    | "gone"
+    | "failed"
+    | "partial"
+    | "retired"
+    | "foreign"
+    | "unverified"
+    | "not_found";
   /** What was wrong before (`field value`). */
   wrong?: string[];
   error?: string;
@@ -148,18 +196,19 @@ export async function retagAgents(
   opts: { workstream?: string; names?: readonly string[] } = {},
 ): Promise<RetagResult[]> {
   const scope = opts.workstream !== undefined ? { workstream: opts.workstream } : {};
-  const agents = listAgents(db, scope).filter(
-    (a) => opts.names === undefined || opts.names.length === 0 || opts.names.includes(a.name),
-  );
-  if (mux.readCrewTags === undefined || mux.writeCrewTags === undefined) return [];
+  const names = opts.names ?? [];
+  const agents = listAgents(db, scope).filter((a) => names.length === 0 || names.includes(a.name));
+  const results: RetagResult[] = names
+    .filter((n) => !agents.some((a) => a.name === n))
+    .map((name) => ({ name, workstream: opts.workstream ?? "", status: "not_found" as const }));
+  if (mux.readCrewTags === undefined || mux.writeCrewTags === undefined) return results;
   const tags = await mux.readCrewTags();
   const problems = new Map(crewTagProblems(mux, agents, tags).map((p) => [p.agent.incarnation, p]));
-  const results: RetagResult[] = [];
   for (const agent of agents) {
     const base = { name: agent.name, workstream: agent.workstreamName, paneId: agent.paneId };
-    const have = tags.get(agent.paneId);
-    if (have === undefined || !samePane(agent, have) || !mux.isValidPaneId(agent.paneId)) {
-      results.push({ ...base, status: "gone" });
+    const standing = paneStanding(mux, agent, tags);
+    if (standing.kind !== "live") {
+      results.push({ ...base, status: standing.kind });
       continue;
     }
     const p = problems.get(agent.incarnation);
@@ -169,6 +218,7 @@ export async function retagAgents(
     }
     const blockOk = p.have.sessionLabel !== undefined && p.have.agent === agent.name;
     try {
+      // A live tmux row has its server recorded: the write is guarded to that server.
       if (!blockOk) await mux.writeCrewTags(rowRef(mux, agent.paneId, agent.paneIdentity), p.want);
       results.push({ ...base, status: p.sessionWrong ? "partial" : "changed", wrong: p.wrong });
     } catch (err) {

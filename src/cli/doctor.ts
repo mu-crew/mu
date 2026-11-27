@@ -135,6 +135,7 @@ async function crewTagsReport(db: Db): Promise<CrewTagsReport> {
     return {
       check: { name: "crew-tags", status: "ok", detail: "no multiplexer" },
       problems: [],
+      unverified: [],
       lines: [],
     };
   }
@@ -584,7 +585,7 @@ export async function cmdDoctorJson(
     ...Object.fromEntries(health?.env.map((f) => [f.name.replace(/^\$/, ""), f.value]) ?? []),
     agentState: agentStateCheck(health, extensionLive(ctlSockets.agents)),
     ctl: { extension: muExt, sockets: ctlSockets.check, agents: ctlSockets.agents },
-    crewTags: { ...crewTags.check, warnings: crewTags.lines },
+    crewTags: { ...crewTags.check, warnings: crewTags.lines, unverified: crewTags.unverified },
   };
 
   // db / schema

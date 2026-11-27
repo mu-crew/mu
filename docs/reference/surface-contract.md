@@ -53,6 +53,19 @@ their guarantees:
   new one) and reports the resulting `model` and `thinkingLevel`, which ctl
   `status` also carries; any other channel refuses it (exit 2), and an
   extension without the `model` op is `AgentExtensionOutdatedError` (exit 4).
+- **Crew tags.** A spawn (`agent spawn`, task-bound spawn, `orchestrate`,
+  a plugin view) whose crew tags (tmux `@mu_*`, Rex block/session label)
+  fail to set keeps its pane and warns once (stderr, or `--json`
+  `warnings`); a task-bound spawn records it in `spawn_receipts.warning`.
+  `mu doctor`'s `crew tags` row (`environment.crewTags`: `status`,
+  `detail`, `warnings`, `unverified`) reads every pane in one batch per
+  server and warns per live agent whose tags are missing or wrong; it never
+  fails. `mu agent retag [-w ws] [name...]` rewrites them through the same
+  server-guarded write, idempotently, and reports per agent `changed|ok|
+  partial|failed` or, never written, `gone|retired|foreign|unverified|
+  not_found`. A legacy tmux row (no `pane_identity`) is `unverified`: its
+  `%N` may be another server's pane. An unknown name exits 3, a failed
+  write 1.
 - **Executor.** `mu task auto` and `mu next` (`--dry`, `--hold`,
   `--workers`, `--refute`), `dispatch_host`.
 - **Delegates.** A `mu_delegate` call is a `kind=delegate` task with a

@@ -81,6 +81,10 @@ export async function cmdOrchestrate(
     warnings.push(warn.message);
     if (!opts.json) console.error(pc.yellow(`warning: ${warn.message}`));
   }
+  if (agent.tagWarning !== undefined) {
+    warnings.push(agent.tagWarning);
+    if (!opts.json) console.error(pc.yellow(`warning: ${agent.tagWarning}`));
+  }
   let attach: string | undefined;
   try {
     const mux = await activeMux();

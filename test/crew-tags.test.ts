@@ -8,9 +8,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { crewTagProblems, crewTagsDoctorCheck, retagAgents } from "../src/agents/crew-tags.js";
 import { insertAgent } from "../src/agents.js";
+import { cmdRetag } from "../src/cli/agent-retag.js";
 import { type Db, openDb } from "../src/db.js";
 import type { CrewTags } from "../src/mux/types.js";
 import { rexBackend, tmuxBackend } from "../src/mux.js";
+import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { installMux, type MuxHarness, REX_PANE } from "./_mux.js";
 
 const OTHER_BLOCK = "block:01a1a0d4-b59b-7416-9cdb-67e9cd36dd6c";
@@ -111,8 +113,14 @@ describe("Rex label check", () => {
 });
 
 describe("tmux tag check", () => {
-  const row = (name: string, paneId: string) =>
-    insertAgent(db, { name, workstream: "ws", cli: "pi", paneId });
+  const row = (name: string, paneId: string, paneIdentity: string | null = "1|2") =>
+    insertAgent(db, {
+      name,
+      workstream: "ws",
+      cli: "pi",
+      paneId,
+      ...(paneIdentity !== null ? { paneIdentity } : {}),
+    });
 
   it("flags missing, wrong and foreign-role tags; keeps a valid role for the rewrite", () => {
     const a = row("w1", "%1");
@@ -139,5 +147,88 @@ describe("tmux tag check", () => {
     const r = await crewTagsDoctorCheck(db, tmuxBackend);
     expect(r.problems.map((p) => p.agent.name)).toEqual(["w2"]);
     expect(mux.calls.filter((c) => c[0] === "list-panes")).toHaveLength(1);
+  });
+
+  it("retag sorts rows it must not write: retired, foreign, gone, unverified, not_found", async () => {
+    row("herdr-a", "w1:p1");
+    row("rex-a", OTHER_BLOCK);
+    row("dead-a", "%99");
+    row("legacy-a", "%1", null);
+    row("other-server", "%2", "9|9");
+    const calls: string[][] = [];
+    setTmuxExecutor(async (args) => {
+      calls.push([...args]);
+      return args[0] === "list-panes"
+        ? { stdout: "%1|1|2|someone|ws2|worker\n%2|1|2|||\n", stderr: "", exitCode: 0 }
+        : { stdout: "", stderr: "", exitCode: 0 };
+    });
+    try {
+      const r = await retagAgents(db, tmuxBackend, {
+        workstream: "ws",
+        names: ["herdr-a", "rex-a", "dead-a", "legacy-a", "other-server", "no-such"],
+      });
+      expect(r.map((x) => [x.name, x.status])).toEqual([
+        ["no-such", "not_found"],
+        ["dead-a", "gone"],
+        ["herdr-a", "retired"],
+        ["legacy-a", "unverified"],
+        ["other-server", "gone"],
+        ["rex-a", "foreign"],
+      ]);
+      // ONE read, no write at all: never a set-option on a pane this row may not own.
+      expect(calls.map((c) => c[0])).toEqual(["list-panes"]);
+    } finally {
+      resetTmuxExecutor();
+    }
+  });
+
+  it("retag writes a verified row through the server guard (if-shell), never a bare set-option", async () => {
+    row("w1", "%1");
+    const calls: string[][] = [];
+    setTmuxExecutor(async (args) => {
+      calls.push([...args]);
+      return args[0] === "list-panes"
+        ? { stdout: "%1|1|2|||\n", stderr: "", exitCode: 0 }
+        : { stdout: "", stderr: "", exitCode: 0 };
+    });
+    try {
+      expect(await retagAgents(db, tmuxBackend)).toMatchObject([{ name: "w1", status: "changed" }]);
+      const write = calls[1] ?? [];
+      expect(write.slice(0, 3)).toEqual(["if-shell", "-F", "#{==:#{pid}|#{start_time},1|2}"]);
+      expect(write[3]).toContain("set-option -p -t %1 @mu_agent w1");
+      expect(calls.some((c) => c[0] === "set-option")).toBe(false);
+    } finally {
+      resetTmuxExecutor();
+    }
+  });
+
+  it("doctor reports a legacy row's pane as unverified, never as its problem", async () => {
+    row("legacy-a", "%1", null);
+    mux = installMux("tmux", [["list-panes -a", "%1|1|2|someone|ws2|worker\n"]]);
+    const r = await crewTagsDoctorCheck(db, tmuxBackend);
+    expect(r.problems).toEqual([]);
+    expect(r.unverified).toEqual(["ws/legacy-a"]);
+    expect(r.check.status).toBe("ok");
+    expect(r.check.detail).toContain("1 unverified");
+  });
+
+  it("cmdRetag exits 3 on an unknown name (--json carries every row)", async () => {
+    row("w1", "%1");
+    mux = installMux("tmux", [["list-panes -a", "%1|1|2|w1|ws|worker\n"]]);
+    const err = await cmdRetag(db, ["w1", "ghost"], { workstream: "ws", json: true }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toMatchObject({
+      exitCode: 3,
+      failure: {
+        error: "AgentNotFoundError",
+        data: {
+          agents: [
+            { name: "ghost", status: "not_found" },
+            { name: "w1", status: "ok" },
+          ],
+        },
+      },
+    });
   });
 });

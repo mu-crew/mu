@@ -412,10 +412,14 @@ export async function spawnPluginAgent(
     if (prompt !== undefined && started.baseline !== undefined) {
       opts.firstTurn?.delivered(started.baseline);
     }
+    let tagWarning: string | undefined;
     const row = await openView(
       db,
       {
         opts,
+        onTagFailure: (w) => {
+          tagWarning = w;
+        },
         cli,
         command,
         commandSource,
@@ -468,6 +472,7 @@ export async function spawnPluginAgent(
         ctlSocket: sockets?.local ?? "",
         ...(ready.incarnation !== undefined ? { ctlIncarnation: ready.incarnation } : {}),
         ...(ready.trustDialog ? { trustDialog: true as const } : {}),
+        ...(tagWarning !== undefined ? { tagWarning } : {}),
       };
     }
     const baseline = started.baseline ?? (await readiness(db, row));
@@ -480,7 +485,13 @@ export async function spawnPluginAgent(
     // An at-start kind's first prompt, delivered by the start; no control socket.
     const firstSend: SendResult = { transport: kind.caps.channel ?? "", ...baseline };
     if (prompt !== undefined) firstSend.msgId = prompt.msgId;
-    return { ...row, ctl: "skipped", ctlSocket: "", ...(prompt ? { firstSend } : {}) };
+    return {
+      ...row,
+      ctl: "skipped",
+      ctlSocket: "",
+      ...(prompt ? { firstSend } : {}),
+      ...(tagWarning !== undefined ? { tagWarning } : {}),
+    };
   } catch (err) {
     if (kept) throw err;
     try {
@@ -563,6 +574,8 @@ interface ViewOf {
    * record moves by wire transitions from this revision (src/carrier-wire.ts).
    */
   wire?: WireRef;
+  /** The view's crew tags failed to set (the pane lives on untagged): the warning line. */
+  onTagFailure?: (warning: string) => void;
 }
 
 /**
@@ -615,6 +628,7 @@ async function openView(
           "@mu_workstream": opts.workstream,
           "@mu_role": "worker",
         },
+        ...(v.onTagFailure !== undefined ? { onTagFailure: v.onTagFailure } : {}),
         ...(view.cwd !== undefined ? { cwd: view.cwd } : {}),
         env: view.env,
         onPaneCreated: (pid, identity) => {

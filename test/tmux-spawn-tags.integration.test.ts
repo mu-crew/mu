@@ -9,20 +9,23 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { crewTagsDoctorCheck, retagAgents } from "../src/agents/crew-tags.js";
 import { getReceipt } from "../src/agents/receipts.js";
 import { spawnForTask } from "../src/agents/task-spawn.js";
-import { spawnAgent } from "../src/agents.js";
+import { insertAgent, spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { tmuxBackend } from "../src/mux.js";
 import { addTask } from "../src/tasks/edit.js";
 import { taskIdFor } from "../src/tasks.js";
 import {
+  ensureSession,
   resetSleep,
   resetTmuxExecutor,
+  serverIdentity,
   setTmuxExecutor,
   spawnAgent as spawnPane,
   tmux,
 } from "../src/tmux.js";
 import { freshWorkstream } from "./_fixture.js";
 import { killPrivateSession, tmuxIntegrationAvailable } from "./_mux.js";
+import { registerTmuxSocket, stopTestTmux } from "./_server-registry.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 
@@ -144,5 +147,100 @@ describeIfTmux("a failed tag write is visible and repairable", () => {
     }).catch(() => undefined);
     const rec = getReceipt(db, taskIdFor(db, "t1", workstream) ?? 0, "manual:t1");
     expect(rec?.warning).toMatch(/@mu_\* tags not set on %\d+ \(tmux: injected/);
+  });
+});
+
+// Pane ids restart per tmux server: `%0` on server A and `%0` on server B are different panes.
+// A legacy row (no recorded server) must never claim B's `%0`; a verified row of A sees B's as gone.
+describeIfTmux("crew tags across two tmux servers (private sockets)", () => {
+  let dir: string;
+  let db: Db;
+  let outer: string | undefined;
+  let sockA: string | undefined;
+  let sockB: string | undefined;
+  const session = "mu-ws";
+  const tagsOf = (pane: string) =>
+    tmux(["display-message", "-p", "-t", pane, "#{@mu_agent}|#{@mu_workstream}|#{@mu_role}"]);
+  const pane = (name: string, paneOptions?: Record<string, string>) =>
+    spawnPane({
+      session,
+      window: name,
+      name,
+      cli: "sh",
+      command: "sh -c 'while true; do sleep 60; done'",
+      env: {},
+      ...(paneOptions !== undefined ? { paneOptions } : {}),
+    });
+  const use = (socket: string) => {
+    process.env.MU_TMUX_SOCKET = socket;
+    resetTmuxExecutor();
+  };
+
+  beforeEach(() => {
+    resetSleep();
+    outer = process.env.MU_TMUX_SOCKET;
+    sockA = registerTmuxSocket();
+    sockB = registerTmuxSocket();
+    dir = mkdtempSync(join(tmpdir(), "mu-tags-2srv-"));
+    db = openDb({ path: join(dir, "mu.db") });
+  });
+
+  afterEach(() => {
+    for (const s of [sockA, sockB]) {
+      try {
+        stopTestTmux(s);
+      } catch {}
+    }
+    if (outer === undefined) delete process.env.MU_TMUX_SOCKET;
+    else process.env.MU_TMUX_SOCKET = outer;
+    resetTmuxExecutor();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("never writes another server's pane: legacy is unverified, verified is gone", async () => {
+    if (sockA === undefined || sockB === undefined) throw new Error("no sockets");
+    use(sockA);
+    await ensureSession(session);
+    const a0 = await pane("legacy-a");
+    const a1 = await pane("verified-a");
+    const idA = await serverIdentity();
+    insertAgent(db, { name: "legacy-a", workstream: "ws", cli: "sh", paneId: a0 });
+    insertAgent(db, {
+      name: "verified-a",
+      workstream: "ws",
+      cli: "sh",
+      paneId: a1,
+      ...(idA !== undefined ? { paneIdentity: idA } : {}),
+    });
+
+    use(sockB);
+    await ensureSession(session);
+    const human = { "@mu_agent": "someone", "@mu_workstream": "ws2", "@mu_role": "worker" };
+    const b0 = await pane("b0", human);
+    const b1 = await pane("b1", human);
+    // The same ids, another server: the collision this guards against.
+    expect([b0, b1]).toEqual([a0, a1]);
+
+    const doctor = await crewTagsDoctorCheck(db, tmuxBackend);
+    expect(doctor.problems).toEqual([]);
+    expect(doctor.unverified).toEqual(["ws/legacy-a"]);
+
+    expect(await retagAgents(db, tmuxBackend, { workstream: "ws" })).toMatchObject([
+      { name: "legacy-a", status: "unverified" },
+      { name: "verified-a", status: "gone" },
+    ]);
+    expect((await tagsOf(b0)).trim()).toBe("someone|ws2|worker");
+    expect((await tagsOf(b1)).trim()).toBe("someone|ws2|worker");
+
+    // Back on A, the verified row is live and its write lands (guarded to A).
+    use(sockA);
+    expect(await retagAgents(db, tmuxBackend, { workstream: "ws" })).toMatchObject([
+      { name: "legacy-a", status: "unverified" },
+      { name: "verified-a", status: "changed" },
+    ]);
+    expect((await tagsOf(a1)).trim()).toBe("verified-a|ws|worker");
+    use(sockB);
+    expect((await tagsOf(b1)).trim()).toBe("someone|ws2|worker");
   });
 });

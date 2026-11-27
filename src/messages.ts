@@ -309,6 +309,10 @@ export const MESSAGES = {
     `@mu_* tags not set on ${pane} (tmux: ${why}); murmur will show this agent as human; fix: mu agent retag`,
   "agent.crew_tags_wrong": (name: string, ws: string, pane: string, wrong: string) =>
     `${ws}/${name} (${pane}): ${wrong}; murmur shows it as human; fix: mu agent retag -w ${ws} ${name}`,
+  "agent.crew_tags_unverified": () =>
+    "legacy rows with no recorded tmux server: their %N may be another server's pane; respawn to check",
+  "agent.retag_unverified": () =>
+    "no recorded tmux server, so its pane id may be another server's; not written (respawn it)",
   "agent.rex_session_label": (label: string, ws: string) =>
     `its Rex session is labelled ${JSON.stringify(label)}, not mu-${ws} (retag sets only the block label)`,
   "agent.send_interrupt_excl": (flag: string) => `--interrupt and ${flag} are mutually exclusive`,

@@ -28,3 +28,22 @@ it("passes the @mu_* pane options to the plugin view's spawnAgent", async () => 
     "@mu_role": "worker",
   });
 }, 15_000);
+
+it("a failed tag write on the plugin view keeps the agent and returns the warning", async () => {
+  await h.setup({ handle: "file", start: { lookup: true, fenceKey: false }, view: "detached" });
+  let passed = false;
+  h.stubMux({
+    spawnAgent: async (s) => {
+      passed = s.onTagFailure !== undefined;
+      h.panes.set("%1", { command: s.command });
+      writeFileSync(leaseJobFile(h.db, "ws", "w1"), "file-job-1\n");
+      s.onPaneCreated?.("%1", FAKE_SERVER_IDENTITY);
+      s.onTagFailure?.("@mu_* tags not set on %1 (tmux: injected)");
+      return "%1";
+    },
+  });
+  const agent = await h.spawn();
+  expect(passed).toBe(true);
+  expect(agent.paneId).toBe("%1");
+  expect(agent.tagWarning).toBe("@mu_* tags not set on %1 (tmux: injected)");
+}, 15_000);
