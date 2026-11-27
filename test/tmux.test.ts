@@ -271,6 +271,15 @@ describe("killPane", () => {
     await expect(killPane(fakePane("%15"))).resolves.toBeUndefined();
   });
 
+  it.each(["pane not found", "no current target"])(
+    "idempotent when tmux answers %s (a sessionless server with exit-empty off)",
+    async (stderr) => {
+      const { executor } = harness(() => fail(stderr));
+      setTmuxExecutor(executor);
+      await expect(killPane(fakePane("%15"))).resolves.toBeUndefined();
+    },
+  );
+
   it("propagates other errors", async () => {
     const { executor } = harness(() => fail("server gone"));
     setTmuxExecutor(executor);

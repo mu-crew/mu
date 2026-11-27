@@ -634,9 +634,10 @@ export async function killPane(ref: PaneRef): Promise<void> {
   const r = await execOnPane(paneTarget(ref), (id) => ["kill-pane", "-t", id]);
   // Another server holds the id: that pane is not the caller's, and is left alone.
   if (r.foreign) return;
-  if (r.exitCode !== 0 && !/can't find pane/i.test(r.stderr) && !NO_SERVER_RE.test(r.stderr)) {
-    throw new TmuxError(r.args, r.stderr, r.stdout, r.exitCode);
-  }
+  if (r.exitCode === 0 || NO_SERVER_RE.test(r.stderr)) return;
+  // A sessionless server (`exit-empty off`) answers `no current target` for a gone pane.
+  if (/can't find pane|pane not found|no current target/i.test(r.stderr)) return;
+  throw new TmuxError(r.args, r.stderr, r.stdout, r.exitCode);
 }
 
 export async function paneAlive(ref: string | VerifiedPaneRef): Promise<boolean> {
