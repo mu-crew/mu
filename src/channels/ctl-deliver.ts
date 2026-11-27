@@ -49,7 +49,6 @@ import { LOCAL_LOOP_TRANSPORT, remoteLoopHost } from "../hosts.js";
 import { viewPresent } from "../jobs/view.js";
 import { requireMuleMaster, workspaceHost } from "../local-loop.js";
 import { say } from "../messages.js";
-import { activeMux, attachShellLine } from "../mux.js";
 import { shellWord } from "../shell-quote.js";
 import { targetSocket } from "./select.js";
 import type {
@@ -91,26 +90,13 @@ export function isSlashCommand(text: string): boolean {
 }
 
 /**
- * The recovery inputs of an outdated-extension error that only mu can
- * compute: the mux's own /reload line (when its backend can type one) and
- * the agent's spawn command, rebuilt from its row. Each is omitted when it
+ * The recovery input of an outdated-extension error that only mu can
+ * compute: the agent's spawn command, rebuilt from its row. Omitted when it
  * cannot be filled exactly (a hint mu cannot fill is not printed).
  */
-export async function outdatedRecovery(
-  agent: AgentRow,
-): Promise<{ muxReload?: string; respawn?: string }> {
-  let muxReload: string | undefined;
-  try {
-    const mux = await activeMux();
-    if (mux.reloadCommands) muxReload = attachShellLine(mux.reloadCommands(agent.paneId));
-  } catch {
-    // no reachable mux: the respawn step still stands
-  }
+export function outdatedRecovery(agent: AgentRow): { respawn?: string } {
   const respawn = respawnCommand(agent);
-  return {
-    ...(muxReload !== undefined ? { muxReload } : {}),
-    ...(respawn !== undefined ? { respawn } : {}),
-  };
+  return respawn !== undefined ? { respawn } : {};
 }
 
 /**
@@ -165,7 +151,7 @@ async function extensionOutdated(
     e.op,
     extVersion,
     e.ops,
-    await outdatedRecovery(agent),
+    outdatedRecovery(agent),
   );
 }
 
@@ -211,7 +197,7 @@ async function fencedHello(
       feature,
       hello.extVersion,
       hello.ops,
-      { ...(await outdatedRecovery(agent)), feature: true },
+      { ...outdatedRecovery(agent), feature: true },
     );
   if (o.feature !== undefined && !ctlServes(hello, o.feature)) throw await outdated(o.feature);
   const inc = hello.incarnation;

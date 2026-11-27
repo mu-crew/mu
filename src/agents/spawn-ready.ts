@@ -279,8 +279,7 @@ export async function awaitSpawnLiveness(
  *
  * NOT an error: the pane and agent are kept, so this is a warning that
  * spawn reports and that skips the initial --send. Startup scan only: it
- * does not protect a later `mu agent send`, and the herdr spawn path
- * never runs this scan. No keypress is ever sent for the operator.
+ * does not protect a later `mu agent send`. No keypress is ever sent for the operator.
  */
 const CLAUDE_TRUST_DIALOG = /Yes, I trust this folder/i;
 

@@ -14,7 +14,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAgent, spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { herdrBackend } from "../src/mux/herdr.js";
 import { muxByName, setMuxForTests } from "../src/mux.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream, listEmptyWorkstreams } from "../src/workstream.js";
@@ -203,60 +202,5 @@ describe("teardown --empty leaves the kept-alive scratch session", () => {
     expect(named.data).toMatchObject({ killedMux: false });
     expect(killed).toEqual([]);
     expect(sessions.has("mu-scratch")).toBe(true);
-  });
-});
-
-describe("herdr: the placeholder window is found by name", () => {
-  const WORKSPACE_CREATED = JSON.stringify({
-    result: {
-      root_pane: { pane_id: "w1:p1", tab_id: "w1:t1", workspace_id: "w1" },
-      tab: { label: "1", number: 1, tab_id: "w1:t1", workspace_id: "w1" },
-      type: "workspace_created",
-      workspace: { label: "mu-scratch", number: 1, workspace_id: "w1" },
-    },
-  });
-
-  it("ensureSession labels the first tab _mu", async () => {
-    mux = installMux("herdr", [
-      ["workspace list", JSON.stringify({ result: { workspaces: [] } })],
-      ["workspace create", WORKSPACE_CREATED],
-      ["tab rename", JSON.stringify({ result: { type: "ok" } })],
-    ]);
-    await herdrBackend.ensureSession("mu-scratch");
-    expect(mux.calls.map((c) => c.join(" "))).toEqual([
-      "workspace list",
-      "workspace create --label mu-scratch --no-focus",
-      "tab rename w1:t1 _mu",
-    ]);
-  });
-
-  it("repairing `_mu` on herdr creates a bare tab (no command)", async () => {
-    mux = installMux("herdr", [
-      [
-        "workspace list",
-        JSON.stringify({ result: { workspaces: [{ label: "mu-scratch", workspace_id: "w1" }] } }),
-      ],
-      [
-        "tab list",
-        JSON.stringify({ result: { tabs: [{ label: "delegate-x", tab_id: "w1:t1" }] } }),
-      ],
-      [
-        "tab create",
-        JSON.stringify({ result: { root_pane: { pane_id: "w1:p2", tab_id: "w1:t2" } } }),
-      ],
-    ]);
-    expect(await herdrBackend.ensureSession("mu-scratch")).toEqual({
-      created: false,
-      repaired: true,
-    });
-    expect(mux.calls.at(-1)).toEqual([
-      "tab",
-      "create",
-      "--workspace",
-      "w1",
-      "--label",
-      "_mu",
-      "--no-focus",
-    ]);
   });
 });

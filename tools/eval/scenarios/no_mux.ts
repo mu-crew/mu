@@ -1,5 +1,5 @@
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
-// No multiplexer at all: neither tmux nor herdr is on mu's PATH (the AUT's own shell keeps its tools).
+// No multiplexer at all: neither tmux nor Rex is on mu's PATH (the AUT's own shell keeps its tools).
 // Setup seeds the workstream while tmux still works, then rewrites the sandbox `mu` shim so mu runs
 // with a PATH that holds only node, git and sqlite3 and without MU_MUX/MU_TMUX_SOCKET: from then on
 // mu sees what it sees on a machine with no multiplexer installed.
@@ -198,8 +198,8 @@ function checksIn(
 
 const scenario: Scenario = {
   id: "no_mux",
-  title: "no tmux or herdr on the machine: task, sql and sync verbs keep working",
-  prompt: `This machine has no tmux and no herdr, so agents cannot run here: do not try to start one. In workstream eval, add the note '${NOTE}' to task n1 (the note text exactly, no extra words), confirm with mu's SQL that eval holds exactly one open task, and close n1 with evidence 'note added'. Work until it is done; do not ask me questions.`,
+  title: "no tmux or Rex on the machine: task, sql and sync verbs keep working",
+  prompt: `This machine has no tmux and no Rex, so agents cannot run here: do not try to start one. In workstream eval, add the note '${NOTE}' to task n1 (the note text exactly, no extra words), confirm with mu's SQL that eval holds exactly one open task, and close n1 with evidence 'note added'. Work until it is done; do not ask me questions.`,
   async setup(sb) {
     await makeRepo(sb, { "notes.txt": "start\n" });
     await gateScript(sb);

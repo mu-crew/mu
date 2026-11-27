@@ -389,7 +389,7 @@ describe("blank and padded workstream names are rejected everywhere, never trimm
   });
 });
 
-describe("no multiplexer at all (no tmux, no herdr)", () => {
+describe("no multiplexer at all (no tmux, no Rex)", () => {
   let unreachable: { restore(): void };
 
   beforeEach(() => {
@@ -494,7 +494,7 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
 });
 
 describe("a mux binary with no client is not 'no mux'", () => {
-  it("doctor exits 0 when tmux answers, with $TMUX/$TMUX_PANE/$HERDR_ENV unset", async () => {
+  it("doctor exits 0 when tmux answers, with $TMUX/$TMUX_PANE unset", async () => {
     const mux = installMux("tmux", [["-V", "tmux 3.4"]]);
     try {
       const r = await runCliJson(["doctor", "--json"], dbPath);

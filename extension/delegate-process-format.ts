@@ -1,5 +1,5 @@
 /**
- * The pure wording of a mux-free delegate (no tmux, no herdr): the tool
+ * The pure wording of a mux-free delegate (no tmux, no Rex): the tool
  * result, and why a `mu delegates run <call-id> --json` sent nothing or died.
  * The runner (src/delegate-process.ts) finishes the call durably; its answer
  * reaches the model through the settle wait like any delegate's. Split from delegate.ts

@@ -19,7 +19,7 @@ import { anchorDir } from "../src/anchors.js";
 import { injectedIdentity, injectedWorkstream } from "../src/cli.js";
 import { type Db, openDb } from "../src/db.js";
 import { delegateChildEnv } from "../src/delegate-process.js";
-import { herdrBackend, rexBackend, setMuxForTests, tmuxBackend } from "../src/mux.js";
+import { rexBackend, setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { LOCAL_ONLY_ENV } from "../src/remote-agent.js";
 import { resetSleep, setSleepForTests, TmuxServerInAgentError } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -202,7 +202,6 @@ describe("anchors: a hook harness starts through the wrapper (spec D3)", () => {
   it("only tmux anchors: a claude pane on a backend without a hook reader keeps its plain command", async () => {
     expect(tmuxBackend.anchorsPanes).toBe(true);
     expect(rexBackend.anchorsPanes).toBe(false);
-    expect(herdrBackend.anchorsPanes).toBe(false);
     // tmux's functions on the installed fake executor, with Rex's capability.
     const previous = setMuxForTests({ ...tmuxBackend, anchorsPanes: false });
     try {

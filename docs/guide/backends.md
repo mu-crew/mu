@@ -1,10 +1,10 @@
 # How to choose a multiplexer backend
 
-mu drives one multiplexer per command: tmux,
-[herdr](https://github.com/herdrdev/herdr) or
+mu drives one multiplexer per command: tmux or
 [Rex](https://www.superlogical.com/rex). Spawn, send, read, and agent
-state work on all three; on Rex, a non-pi agent's state needs it to
-report OSC 7501 (see below).
+state work on both; on Rex, a non-pi agent's state needs it to
+report OSC 7501 (see below). herdr was retired in mu 6: see
+[Retired: herdr](#retired-herdr).
 
 ## tmux: vtmux or vanilla
 
@@ -29,14 +29,12 @@ mu doctor --json    # .environment.mux.name
 
 mu picks the backend from the first rule that matches:
 
-1. `MU_MUX=tmux`, `herdr` or `rex`. An unknown value fails with exit 1.
-2. `HERDR_ENV=1`: herdr. This wins over tmux variables, because a herdr
-   pane can host a tmux server.
-3. `$TMUX` or `$TMUX_PANE` is set: tmux.
-4. `$REX_SESSION` with `TERM_PROGRAM=rex` (a Rex terminal): rex. Last,
-   because tmux or herdr started in a Rex tab inherit `$REX_SESSION`.
-5. The first binary that runs: tmux, then herdr, then rex.
-6. None: `NoMultiplexerError`, exit 5.
+1. `MU_MUX=tmux` or `rex`. An unknown value (and `herdr`) fails with exit 1.
+2. `$TMUX` or `$TMUX_PANE` is set: tmux.
+3. `$REX_SESSION` with `TERM_PROGRAM=rex` (a Rex terminal): rex. Last,
+   because tmux started in a Rex tab inherits `$REX_SESSION`.
+4. The first binary that runs: tmux, then rex.
+5. None: `NoMultiplexerError`, exit 5.
 
 ## Worktrees are git worktrees
 
@@ -46,38 +44,23 @@ copy backend.
 
 ## Know what differs
 
-| | tmux | herdr | Rex |
-| --- | --- | --- | --- |
-| Workstream | session `mu-<ws>` | workspace labelled `mu-<ws>` | session labelled `mu-<ws>` |
-| Window | window | tab | window (a tab in Rex.app) |
-| Pane id | `%15` | `w1:p1` | `block:<uuid>` |
-| Attach | `tmux attach -t mu-<ws>` (a spawn prints `attach-session -t mu-<ws>:<agent>`, `-L <socket>` on a private socket, `switch-client` inside tmux) | `herdr workspace focus <id>`, then `herdr` outside a herdr pane | `rex do session.select session_id=… window_id=…`: Rex.app switches to it |
-| pi agent state | control socket | control socket | control socket |
-| Other agents' state | the program's own OSC 7501 reports on vtmux (murmur 2.x hooks on vanilla tmux) | herdr | the program's own OSC 7501 reports |
-| Send to non-pi agents | claude, codex, cursor-agent, muse: a paste confirmed by run count (`hooks`); others refused (exit 4) | one atomic `agent prompt` | a paste event, then Enter |
-| Spawn | one command | bare pane, then `agent start` | one API call |
-| `--mule` (remote workspace) | yes | refused | yes |
-| `--host` (remote loop) | yes | refused | session templates only; lease and plugin job views refused |
-| Pane borders, layout | set by mu | left to herdr | left to Rex |
-| Test isolation | `MU_TMUX_SOCKET` | `MU_HERDR_SESSION` | `MU_REX_SERVER` |
+| | tmux | Rex |
+| --- | --- | --- |
+| Workstream | session `mu-<ws>` | session labelled `mu-<ws>` |
+| Window | window | window (a tab in Rex.app) |
+| Pane id | `%15` | `block:<uuid>` |
+| Attach | `tmux attach -t mu-<ws>` (a spawn prints `attach-session -t mu-<ws>:<agent>`, `-L <socket>` on a private socket, `switch-client` inside tmux) | `rex do session.select session_id=… window_id=…`: Rex.app switches to it |
+| pi agent state | control socket | control socket |
+| Other agents' state | the program's own OSC 7501 reports on vtmux (murmur 2.x hooks on vanilla tmux) | the program's own OSC 7501 reports |
+| Send to non-pi agents | claude, codex, cursor-agent, muse: a paste confirmed by run count (`hooks`); others refused (exit 4) | a paste event, then Enter |
+| Spawn | one command | one API call |
+| `--mule` (remote workspace) | yes | yes |
+| `--host` (remote loop) | yes | session templates only; lease and plugin job views refused |
+| Pane borders, layout | set by mu | left to Rex |
+| Test isolation | `MU_TMUX_SOCKET` | `MU_REX_SERVER` |
 
 Where each agent's state comes from, per backend:
 [architecture/mux.md § Agent state](../architecture/mux.md#agent-state).
-
-## Know herdr's limits
-
-- `mu agent read --lines` cannot recover rows that scrolled off a pane
-  on the alternate screen.
-- herdr starts the agent binary itself (`herdr agent start --kind
-  <cli>`), so spawn refuses `--command` and `MU_<CLI>_COMMAND` with
-  exit 2 instead of running a different binary. Unset the variable, or
-  spawn with `MU_MUX=tmux`.
-- For remote spawns and reattaches, use tmux (Rex also supports local
-  loops and session templates): herdr cannot run the managed argv, carrier
-  command, or job view in a pane. `mu host exec`
-  still works because it calls the host's link without opening a pane.
-- herdr creates every workspace detached. Run `herdr workspace focus`
-  yourself.
 
 ## Know Rex's limits
 
@@ -116,6 +99,12 @@ Verbs that need the multiplexer, such as spawn, send, close, and
 reconcile, exit 5 with remediation steps. Verbs that only use it for
 decoration, such as identity lookup and `mu workstream list`, carry on.
 
-A herdr argument error raises `HerdrSyntaxError`, not a multiplexer
-error. It means herdr's CLI changed and mu needs a fix. The herdr
-server is fine.
+## Retired: herdr
+
+mu 6 no longer drives herdr. `MU_MUX=herdr` fails with exit 1, and
+`$HERDR_ENV` selects nothing. Agent rows a herdr pane left (pane id
+`w1:p1`) stay in the DB as a retired foreign backend: no backend lists
+their panes, so reconcile never reaps them as ghosts and never reopens
+their tasks. `mu state` reports them `unknown` (`foreign backend: herdr`),
+and a spawn in their workstream refuses: start a new workstream on tmux
+or Rex.

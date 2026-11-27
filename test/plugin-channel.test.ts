@@ -33,11 +33,9 @@ import {
   deliver,
   readAgentStates,
 } from "../src/channels/index.js";
-import { classifyError } from "../src/cli/handle.js";
-import { addHost, HostSpawnUnsupportedError, listHostChannels } from "../src/hosts.js";
+import { addHost } from "../src/hosts.js";
 import { EffectOutcomeUnknownError } from "../src/plugins/errors.js";
 import { reconcile } from "../src/reconcile.js";
-import { installMux } from "./_mux.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 
 const h = pluginHostFixture({ handshakeInProcess: true });
@@ -105,36 +103,6 @@ describe("the plugin spawn path (D8)", () => {
     expect(listCarrierJobs(h.db)).toHaveLength(0);
     expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
   });
-
-  it.each(["profile", "provider"])(
-    "herdr refuses a plugin %s's job view before effects",
-    async (type) => {
-      await setup();
-      const host = type === "profile" ? "dev" : "box";
-      if (type === "profile") {
-        addHost(h.db, { name: host, plugin: "fake", fetch: "true", repo: null, max_sessions: 1 });
-      }
-      const mux = installMux("herdr", []);
-      try {
-        const requests = h.f.calls();
-        const ops = h.db.prepare("SELECT * FROM ops").all();
-        const err = await spawn({ host }).catch((e: unknown) => e);
-        expect(err).toBeInstanceOf(HostSpawnUnsupportedError);
-        expect(classifyError(err).exitCode).toBe(2);
-        expect((err as Error).message).toMatch(
-          /herdr.*job view command.*use tmux \(lease and plugin job views are tmux-only/,
-        );
-        expect(h.f.calls()).toEqual(requests);
-        expect(mux.calls).toEqual([]);
-        expect(listCarrierJobs(h.db)).toEqual([]);
-        expect(listHostChannels(h.db, host)).toEqual([]);
-        expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
-        expect(h.db.prepare("SELECT * FROM ops").all()).toEqual(ops);
-      } finally {
-        mux.restore();
-      }
-    },
-  );
 
   it("at-start: the first prompt goes only with job.start, and never as a send", async () => {
     await setup({ firstTurn: "at-start" });

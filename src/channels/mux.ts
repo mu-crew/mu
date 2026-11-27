@@ -1,11 +1,10 @@
 // mu — the `mux` channel: any pane that is not on ctl, read from what the
-// multiplexer (herdr's classifier, Rex's status records) or murmur reports.
+// multiplexer (Rex's status records, vtmux's pane status) or murmur reports.
 //
 // State only, and polled: no watch, no run baseline, no receipts, no write
 // fence (at-most-once comes from never resending) and no last text.
 //
-// Delivery is the backend's own `sendToPane` (herdr's atomic `agent prompt`,
-// Rex's send), with no receipt. A backend without one (tmux) refuses
+// Delivery is the backend's own `sendToPane` (Rex's send), with no receipt. A backend without one (tmux) refuses
 // (AgentSendUnsupportedError): tmux's paste belongs to the `hooks` channel,
 // where a hook event confirms it, and nothing confirms it here. Fresh,
 // interrupt and abort need ctl and are refused with their typed errors; a send

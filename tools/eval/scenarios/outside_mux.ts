@@ -42,9 +42,9 @@ const claimText = (n: number): string =>
 
 const scenario: Scenario = {
   id: "outside_mux",
-  title: "a worker and a delegate wave from a caller outside tmux and herdr",
+  title: "a worker and a delegate wave from a caller outside tmux and Rex",
   prompt:
-    "You are in a plain shell, not inside tmux or herdr. Workstream eval has a worker task o1 (a pi worker needs several seconds for it) and two claims in tasks c1 and c2 (claim-1 and claim-2). Get o1 done by a worker and merge its commit into main in the repo you are in. Get each claim independently checked (quote the claim, with its claim-N name, in the prompt of its check) with the verdict recorded on its task, then close each task as done if confirmed or rejected if refuted. Work until it is done; do not ask me questions, and do not stop while work is still running.",
+    "You are in a plain shell, not inside tmux or Rex. Workstream eval has a worker task o1 (a pi worker needs several seconds for it) and two claims in tasks c1 and c2 (claim-1 and claim-2). Get o1 done by a worker and merge its commit into main in the repo you are in. Get each claim independently checked (quote the claim, with its claim-N name, in the prompt of its check) with the verdict recorded on its task, then close each task as done if confirmed or rejected if refuted. Work until it is done; do not ask me questions, and do not stop while work is still running.",
   timeoutMs: 600_000,
   check: { quietMs: 3000, maxProds: 1 },
   env: { MU_MUX: "" },

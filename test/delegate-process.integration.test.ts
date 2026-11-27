@@ -1,6 +1,6 @@
 // The mux-free delegate runner (src/delegate-process.ts) against a fake pi
 // (test/fixtures/fake-pi.mjs) that serves the real ctl protocol over
-// $MU_CTL_SOCK. tmux and herdr are OFF PATH and unset: nothing here may need
+// $MU_CTL_SOCK. tmux and Rex are OFF PATH and unset: nothing here may need
 // a multiplexer. Real child processes, so full tier only.
 
 import { execFileSync } from "node:child_process";
@@ -59,7 +59,7 @@ let n = 0;
 beforeEach(() => {
   for (const k of KEYS) saved[k] = process.env[k];
   dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "mu-dp-"));
-  // PATH holds node, git and lsof only: tmux and herdr are not reachable.
+  // PATH holds node, git and lsof only: tmux and Rex are not reachable.
   // lsof is the holder scan where there is no /proc (macOS).
   const bin = join(dir, "bin");
   mkdirSync(bin);

@@ -1,6 +1,6 @@
 // The job seam holds (spec 2026-11-09-mu-plugins.md, D8, unit P1): every
-// multiplexer pane probe outside src/mux (a MuxBackend pane read, a raw tmux,
-// herdr or Rex query, of one pane or a listed batch) goes through src/jobs,
+// multiplexer pane probe outside src/mux (a MuxBackend pane read, a raw tmux
+// or Rex query, of one pane or a listed batch) goes through src/jobs,
 // and the lease job's effects (stop, handshake, attach) are reached only
 // through the lease kind. A new direct probe or call fails here. A channel's
 // own reading (ctl's socket status, murmur's inbox) is not a mux probe; that it
@@ -47,21 +47,17 @@ function hits(re: RegExp, allowed: (file: string) => boolean): string[] {
  * Every form of a multiplexer pane probe (the P1 ruling): a `MuxBackend` pane
  * read (the `opts.paneAlive` callback that admission takes is not one: it is
  * handed `viewRunning`), a raw backend executor, a backend binary run by hand,
- * a tmux pane-query word or pane format, and herdr's pane get/list.
+ * and a tmux pane-query word or pane format.
  */
 const PROBES: ReadonlyArray<readonly [string, RegExp]> = [
-  [
-    "MuxBackend pane read",
-    /(?<!opts)\.(paneAlive|paneResult|paneOccupied|paneStatus|panePid|listPanes)\b/,
-  ],
-  ["raw backend executor", /\b(tmux|herdr|rex)\(/],
+  ["MuxBackend pane read", /(?<!opts)\.(paneAlive|paneResult|paneStatus|panePid|listPanes)\b/],
+  ["raw backend executor", /\b(tmux|rex)\(/],
   [
     "backend binary run by hand",
-    /\b(execFileCapture|execGroupCapture|execa|execaSync|execFile|execFileSync|spawn|spawnSync)\(\s*["'](tmux|herdr|rex)["']/,
+    /\b(execFileCapture|execGroupCapture|execa|execaSync|execFile|execFileSync|spawn|spawnSync)\(\s*["'](tmux|rex)["']/,
   ],
   ["tmux pane query", /["'](list-panes|has-session|display-message)["']/],
   ["tmux pane format", /#\{pane_[a-z_]+\}/],
-  ["herdr pane read", /["']pane["']\s*,\s*["'](get|list)["']/],
 ];
 
 /** The probe forms `line` holds. */
@@ -79,23 +75,15 @@ const allowed = (file: string, line: string): boolean =>
   (file === "src/reconcile.ts" && /\bmux\.listPanes\(sessionName\)/.test(line));
 
 /** The MuxBackend pane reads, as method names. */
-const PROBE_METHODS = new Set([
-  "paneAlive",
-  "paneResult",
-  "paneOccupied",
-  "paneStatus",
-  "panePid",
-  "listPanes",
-]);
+const PROBE_METHODS = new Set(["paneAlive", "paneResult", "paneStatus", "panePid", "listPanes"]);
 /** The probes a backend module exports: the pane reads and the raw executors. */
-const PROBE_EXPORTS = new Set([...PROBE_METHODS, "tmux", "herdr", "rex"]);
+const PROBE_EXPORTS = new Set([...PROBE_METHODS, "tmux", "rex"]);
 /** The backend modules (and the barrels that re-export them), as `src/`-relative paths. */
 const BACKEND_MODULES = new Set([
   "src/tmux.ts",
   "src/mux.ts",
   "src/mux/index.ts",
   "src/mux/tmux.ts",
-  "src/mux/herdr.ts",
   "src/mux/rex.ts",
 ]);
 
@@ -178,7 +166,6 @@ describe("the job seam", () => {
       ["string-key destructuring", "src/a.ts", 'const { "paneStatus": s } = mux;'],
       ["named import", "src/a.ts", 'import { tmux } from "./tmux.js";'],
       ["aliased import", "src/agents/a.ts", 'import { paneAlive as up } from "../mux/tmux.js";'],
-      ["herdr executor", "src/a.ts", 'import { herdr } from "./mux/herdr.js";'],
       ["rex probe", "src/cli/a.ts", 'import { panePid } from "../mux/rex.js";'],
       ["namespace import", "src/a.ts", 'import * as t from "./tmux.js";'],
     ];
@@ -216,7 +203,6 @@ describe("the job seam", () => {
       ["paneAlive", "if (await mux.paneAlive(agent.paneId)) return;"],
       ["paneStatus", "const s = await mux.paneStatus?.(agent.paneId);"],
       ["paneResult", "const r = await mux.paneResult(paneId);"],
-      ["paneOccupied", "return mux.paneOccupied(paneId);"],
       ["panePid", "const pid = await mux.panePid?.(id);"],
       ["listPanes", "const panes = await (await activeMux()).listPanes(session);"],
       ["list-panes argv", 'const out = await tmux(["list-panes", "-a", "-F", "x"]);'],
@@ -224,8 +210,7 @@ describe("the job seam", () => {
       ["display-message pane_dead", '["display-message", "-p", "-t", id, "#{pane_dead}"],'],
       ["display-message pane_id", '  "#{pane_id}",'],
       ["has-session", 'await run(["has-session", "-t", "=mu-a"]);'],
-      ["herdr pane get", 'await herdr(["pane", "get", paneId]);'],
-      ["herdr by hand", 'await execa("herdr", ["pane", "list", "--workspace", ws]);'],
+      ["rex by hand", 'await execa("rex", ["capture", "-s", s, "-b", paneId]);'],
       ["rex", 'await rex(["capture", "-s", s, "-b", paneId]);'],
     ];
     for (const [name, line] of planted) {

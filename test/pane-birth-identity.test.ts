@@ -6,7 +6,7 @@ import { birthIdentity } from "../src/jobs/view.js";
 import type { MuxBackend } from "../src/mux/types.js";
 
 const tmuxLike = { name: "tmux", serverIdentity: async () => "1|2" } as unknown as MuxBackend;
-const herdrLike = { name: "herdr" } as unknown as MuxBackend;
+const rexLike = { name: "rex" } as unknown as MuxBackend;
 
 describe("birthIdentity", () => {
   it("passes the identity the creating call reported", () => {
@@ -16,6 +16,6 @@ describe("birthIdentity", () => {
     expect(() => birthIdentity(tmuxLike, "%1", undefined)).toThrow(/which tmux server/);
   });
   it("gives none for a backend with no server identity", () => {
-    expect(birthIdentity(herdrLike, "p1", undefined)).toBeUndefined();
+    expect(birthIdentity(rexLike, "p1", undefined)).toBeUndefined();
   });
 });

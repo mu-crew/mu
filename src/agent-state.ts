@@ -84,7 +84,6 @@ export const UNKNOWN_REASON = {
   hooksMissing: "murmur hooks not installed",
   noRow: "murmur has no row",
   stale: "remote snapshot stale",
-  herdrNone: "herdr reports no state",
   paneGone: "pane gone",
   ctlMissing: "ctl missing",
   ctlRefused: "ctl refused",
@@ -450,7 +449,7 @@ export async function readMurmurRuntimes(
   return out;
 }
 
-/** State from the mux's own per-pane status (herdr's classifier, Rex's OSC 7501 records). */
+/** State from the mux's own per-pane status (vtmux's and Rex's OSC 7501 records). */
 async function readMuxStates(
   agents: readonly StateAgentRef[],
   mux: Awaited<ReturnType<typeof activeMux>>,
@@ -514,7 +513,7 @@ export async function readGatePanes(
 
 /**
  * The mux channel's state read (src/channels/mux.ts): the mux's own pane
- * status (herdr, Rex), else murmur's tmux pane option, else murmur's remote
+ * status (Rex), else murmur's tmux pane option, else murmur's remote
  * snapshot. `livenessOnly` keys read only whether the pane is alive.
  */
 export async function readBaseStates(

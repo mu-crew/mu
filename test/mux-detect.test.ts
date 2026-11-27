@@ -11,15 +11,12 @@ import {
   activeMux,
   attachShellLine,
   detectMux,
-  herdrBackend,
   type MuxBackend,
   muxByName,
   NoMultiplexerError,
-  resetHerdrExecutor,
   resetMux,
   resetRexExecutor,
   rexBackend,
-  setHerdrExecutor,
   setMuxForTests,
   setRexExecutor,
   tmuxBackend,
@@ -30,24 +27,10 @@ const MU_MUX = "MU_MUX";
 /** The developer's own value: tests set and clear it, then put it back. */
 const INHERITED_TERM_PROGRAM = process.env.TERM_PROGRAM;
 const TMUX = "TMUX";
-const HERDR_ENV = "HERDR_ENV";
 
-/** Make `herdr status` report no running server. */
-function makeHerdrUnavailable(): void {
-  setHerdrExecutor(async () => ({
-    stdout: "server:\n  status: not running",
-    stderr: "",
-    exitCode: 0,
-  }));
-}
-
-/** Make `herdr status` report a running, compatible server. */
-function makeHerdrAvailable(): void {
-  setHerdrExecutor(async () => ({
-    stdout: "server:\n  status: running\n  endpoint_compatible: yes",
-    stderr: "",
-    exitCode: 0,
-  }));
+/** Make `rex version` succeed. */
+function makeRexAvailable(): void {
+  setRexExecutor(async () => ({ stdout: "rex 0.1.0", stderr: "", exitCode: 0 }));
 }
 
 /** Make `tmux -V` (and everything else) fail, so tmuxBackend.available()
@@ -65,9 +48,7 @@ describe("detectMux", () => {
   beforeEach(() => {
     delete process.env[MU_MUX];
     delete process.env[TMUX];
-    delete process.env[HERDR_ENV];
     delete process.env.TMUX_PANE;
-    makeHerdrUnavailable();
     setRexExecutor(async () => ({ stdout: "", stderr: "not found", exitCode: 127 }));
     resetMux();
   });
@@ -75,10 +56,8 @@ describe("detectMux", () => {
   afterEach(() => {
     delete process.env[MU_MUX];
     delete process.env[TMUX];
-    delete process.env[HERDR_ENV];
     delete process.env.TMUX_PANE;
     resetTmuxExecutor();
-    resetHerdrExecutor();
     resetRexExecutor();
     delete process.env.REX_SESSION;
     if (INHERITED_TERM_PROGRAM === undefined) delete process.env.TERM_PROGRAM;
@@ -95,7 +74,7 @@ describe("detectMux", () => {
 
   it("an unknown MU_MUX value throws instead of falling through", async () => {
     // A typo'd backend name must fail loud. Silently running on tmux
-    // would make `MU_MUX=herdrr mu ...` look like it worked.
+    // would make `MU_MUX=tmx mu ...` look like it worked.
     process.env[MU_MUX] = "nope";
     await expect(detectMux()).rejects.toThrow(/unknown mux backend: nope/);
   });
@@ -144,7 +123,7 @@ describe("detectMux", () => {
 
   it("NoMultiplexerError names what it tried, so the message is actionable", async () => {
     makeTmuxUnavailable();
-    await expect(detectMux()).rejects.toThrow(/tried: tmux, herdr, rex/);
+    await expect(detectMux()).rejects.toThrow(/tried: tmux, rex/);
   });
 
   it("a Rex terminal selects rex without shelling out", async () => {
@@ -173,67 +152,36 @@ describe("detectMux", () => {
     expect((await detectMux()).name).toBe("tmux");
   });
 
-  it("$HERDR_ENV=1 wins over a Rex terminal (herdr run in a Rex tab)", async () => {
-    makeHerdrAvailable();
-    process.env[HERDR_ENV] = "1";
-    process.env.REX_SESSION = "session:01a1a0d3-ec66-7aa6-9558-c70476578a93";
-    process.env.TERM_PROGRAM = "rex";
-    expect((await detectMux()).name).toBe("herdr");
-  });
-
   it("MU_MUX=rex selects the rex backend", async () => {
     process.env[MU_MUX] = "rex";
     expect(await detectMux()).toBe(rexBackend);
   });
 
-  it("MU_MUX=herdr selects the herdr backend", async () => {
+  it("MU_MUX=herdr fails loud: herdr is retired, never a silent fallback", async () => {
     makeTmuxAvailable();
     process.env[MU_MUX] = "herdr";
-    expect((await detectMux()).name).toBe("herdr");
+    await expect(detectMux()).rejects.toThrow(/mu 6 no longer drives herdr/);
   });
 
-  it("$HERDR_ENV=1 selects herdr without shelling out", async () => {
-    makeTmuxUnavailable();
-    setHerdrExecutor(async () => {
-      throw new Error("the ambient signal is conclusive; no probe expected");
-    });
-    process.env[HERDR_ENV] = "1";
-    expect((await detectMux()).name).toBe("herdr");
-  });
-
-  it("$HERDR_ENV=1 WINS over $TMUX when both are set", async () => {
-    // The subtle one. herdr routinely runs a tmux server inside its
-    // panes, so an agent can legitimately see BOTH sets of vars. $TMUX
-    // then only proves "there is a tmux somewhere in my ancestry";
-    // $HERDR_ENV is the narrower claim ("herdr manages THIS pane") and
-    // is the one that names the mux owning the pane mu must drive. If
-    // ordering regressed, mu would address herdr panes through tmux and
-    // every pane id would be rejected as malformed.
+  it("$HERDR_ENV=1 no longer selects anything: tmux by availability", async () => {
     makeTmuxAvailable();
-    makeHerdrAvailable();
-    process.env[HERDR_ENV] = "1";
-    process.env[TMUX] = "/tmp/tmux-1000/default,1,0";
-    process.env.TMUX_PANE = "%42";
-    expect((await detectMux()).name).toBe("herdr");
+    process.env.HERDR_ENV = "1";
+    try {
+      expect((await detectMux()).name).toBe("tmux");
+    } finally {
+      delete process.env.HERDR_ENV;
+    }
   });
 
-  it("a non-'1' HERDR_ENV does not select herdr", async () => {
-    // `herdr --skill` mandates exactly `test "${HERDR_ENV:-}" = 1`.
-    // Truthiness would misfire on a stale "0" left in a user's shell.
-    makeTmuxAvailable();
-    process.env[HERDR_ENV] = "0";
-    expect((await detectMux()).name).toBe("tmux");
-  });
-
-  it("falls back to herdr availability when tmux is absent", async () => {
+  it("falls back to Rex availability when tmux is absent", async () => {
     makeTmuxUnavailable();
-    makeHerdrAvailable();
-    expect((await detectMux()).name).toBe("herdr");
+    makeRexAvailable();
+    expect((await detectMux()).name).toBe("rex");
   });
 
   it("tmux wins a pure availability tie, since it is the incumbent", async () => {
     makeTmuxAvailable();
-    makeHerdrAvailable();
+    makeRexAvailable();
     expect((await detectMux()).name).toBe("tmux");
   });
 });
@@ -241,7 +189,7 @@ describe("detectMux", () => {
 describe("muxByName", () => {
   it("resolves a known backend", () => {
     expect(muxByName("tmux")).toBe(tmuxBackend);
-    expect(muxByName("herdr")).toBe(herdrBackend);
+    expect(muxByName("rex")).toBe(rexBackend);
   });
 
   it("throws on an unknown backend", () => {
@@ -309,9 +257,10 @@ describe("tmuxBackend conforms to the MuxBackend contract", () => {
 
   it("owns pane-id validation, so no global regex is needed", () => {
     // The whole point of Q2: shape is the BACKEND's business. tmux ids
-    // are %N; a herdr-style id must not validate here.
+    // are %N; a Rex block or a retired herdr id must not validate here.
     expect(tmuxBackend.isValidPaneId("%15")).toBe(true);
     expect(tmuxBackend.isValidPaneId("w1:p1")).toBe(false);
+    expect(tmuxBackend.isValidPaneId("block:01a1a0d4-b59b-7416-9cdb-67e9cd36dd6b")).toBe(false);
     expect(tmuxBackend.isValidPaneId("0")).toBe(false);
   });
 
@@ -339,7 +288,7 @@ describe("attachCommands + attachShellLine", () => {
   });
 
   // src/cli/agents.ts prints the joined line and the TUI runs the steps.
-  // Both come from the BACKEND: a herdr user handed `tmux attach` is
+  // Both come from the BACKEND: a Rex user handed `tmux attach` is
   // worse off than one handed nothing.
   it("inside a client, switches rather than attaching a second one", async () => {
     const target = { session: "mu-auth", inside: true };
@@ -393,10 +342,10 @@ describe("attachCommands + attachShellLine", () => {
   it("quotes tokens that are not plain, and joins required steps with &&", () => {
     expect(
       attachShellLine([
-        { command: "herdr", args: ["--session", "my work"] },
-        { command: "herdr", args: [] },
+        { command: "rex", args: ["-S", "my work"] },
+        { command: "rex", args: [] },
       ]),
-    ).toBe("herdr --session 'my work' && herdr");
+    ).toBe("rex -S 'my work' && rex");
   });
 });
 

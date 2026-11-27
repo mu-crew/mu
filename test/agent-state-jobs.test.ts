@@ -1,5 +1,5 @@
 // The round-2 review's witnesses (plugins P1): an agent's mux reading on a
-// backend that classifies its own panes (herdr, Rex) and on tmux decides the
+// backend that classifies its own panes (Rex) and on tmux decides the
 // pane's presence through a job read (src/jobs/view.ts), never a mux probe of
 // its own, and the readings are the ones those reads always gave.
 
@@ -23,13 +23,17 @@ vi.mock("../src/jobs/view.js", async (orig) => {
   };
 });
 
-const agent: StateAgentRef = { name: "worker-1", workstreamName: "demo", paneId: "w1:p1" };
+const agent: StateAgentRef = {
+  name: "worker-1",
+  workstreamName: "demo",
+  paneId: "block:12345678-1234-1234-1234-123456789abc",
+};
 const key = "demo/worker-1";
 const probes: string[] = [];
 
 /** A classifying backend: every pane read is counted, so a probe outside src/jobs shows up as calls without job reads. */
 function classifying(
-  name: "herdr" | "rex",
+  name: "rex",
   status: Awaited<ReturnType<NonNullable<MuxBackend["paneStatus"]>>>,
   alive: boolean,
 ): void {
@@ -61,10 +65,7 @@ afterEach(() => {
 });
 
 describe("an agent's mux reading decides presence through a job read", () => {
-  for (const [name, paneId] of [
-    ["herdr", "w1:p1"],
-    ["rex", "block:12345678-1234-1234-1234-123456789abc"],
-  ] as const) {
+  for (const [name, paneId] of [["rex", "block:12345678-1234-1234-1234-123456789abc"]] as const) {
     const worker = { ...agent, paneId };
     it(`${name}: a reported state is a present pane, read through viewStatus`, async () => {
       classifying(name, "busy", false);

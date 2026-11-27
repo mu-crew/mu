@@ -139,7 +139,7 @@ describe("honour or refuse at spawn (G4)", () => {
       repo: null,
       max_sessions: null,
     });
-    setMuxForTests({ ...tmuxBackend, runsShellCommand: true });
+    setMuxForTests(tmuxBackend);
     await expect(
       requireHostSpawn(db, spawnOn({ role: "read-only", command: "claude --x", cli: "pi" })),
     ).resolves.toMatchObject({ name: "dev" });
@@ -159,7 +159,7 @@ describe("honour or refuse at spawn (G4)", () => {
 
   it("a plugin kind that declares them passes the remote spawn's refusals", async () => {
     await fakeKind(db, dir, { honours: HONOURS_ALL });
-    setMuxForTests({ ...tmuxBackend, runsShellCommand: true });
+    setMuxForTests(tmuxBackend);
     await expect(
       requireHostSpawn(db, spawnOn({ role: "read-only", command: "c", cli: "pi" })),
     ).resolves.toMatchObject({ name: "dev" });

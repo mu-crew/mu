@@ -153,25 +153,6 @@ export function remoteLoopHost(agent: {
   return agent.hostTransport === LOCAL_LOOP_TRANSPORT ? null : agent.host;
 }
 
-/** The multiplexer cannot run the remote worker's launch or view. One line, exit 2. */
-export class HostSpawnUnsupportedError extends Error {
-  override readonly name = "HostSpawnUnsupportedError";
-  constructor(
-    public readonly host: string,
-    public readonly mux: string,
-    part:
-      | "managed argv"
-      | "command gate"
-      | "job view command"
-      | "local pi with a mule workspace"
-      | "detached job view command" = "managed argv",
-    /** A lease or plugin view (D15): Rex is no fix either. */
-    tmuxOnly = part !== "managed argv" && part !== "command gate",
-  ) {
-    super(say("host.spawn_unsupported", host, mux, part, tmuxOnly));
-  }
-}
-
 /**
  * D15: a lease carrier or a plugin job's view on a backend that cannot bind a reply to its
  * server instance (Rex today). Refused before any effect, one line, exit 2. Lifted per backend

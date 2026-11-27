@@ -13,12 +13,12 @@ import { type Db, openDb } from "../src/db.js";
 import { MuxError } from "../src/mux.js";
 import { addTask } from "../src/tasks.js";
 import { rmFixtureDir } from "./_fs.js";
-import { installMux, type MuxHarness } from "./_mux.js";
+import { installMux, type MuxHarness, REX_PANE } from "./_mux.js";
 import { softTeardown } from "./_teardown.js";
 
 const DENIED = { stdout: "", stderr: "permission denied", exitCode: 1 };
 
-describe.each(["tmux", "herdr"] as const)("teardownWorkstream probe failure (%s)", (backend) => {
+describe.each(["tmux", "rex"] as const)("teardownWorkstream probe failure (%s)", (backend) => {
   let dir: string;
   let db: Db;
   let mux: MuxHarness | undefined;
@@ -49,7 +49,7 @@ describe.each(["tmux", "herdr"] as const)("teardownWorkstream probe failure (%s)
 
   const seed = (): { sock: string; tasks: () => number; tornDownAt: () => string | null } => {
     addTask(db, { workstream: "ws", localId: "t1", title: "T", impact: 50, effortDays: 1 });
-    insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1" });
+    insertAgent(db, { name: "w1", workstream: "ws", paneId: backend === "rex" ? REX_PANE : "%1" });
     const sock = ctlSocketPath("ws", "w1", dir);
     mkdirSync(dirname(sock), { recursive: true });
     writeFileSync(sock, "");
@@ -87,11 +87,11 @@ describe.each(["tmux", "herdr"] as const)("teardownWorkstream probe failure (%s)
             ["list-panes", { stdout: "", exitCode: 1, stderr: "can't find session" }],
             ["display-message", { stdout: "", exitCode: 1, stderr: "can't find pane" }],
           ])
-        : installMux("herdr", [
-            ["workspace list", JSON.stringify({ result: { workspaces: [] } })],
+        : installMux("rex", [
+            ["api call session.list", JSON.stringify({ sessions: [] })],
             [
-              "pane get",
-              JSON.stringify({ error: { code: "pane_not_found", message: "pane not found" } }),
+              "api call target.resolve",
+              JSON.stringify({ results: [{ query: REX_PANE, status: "not_found" }] }),
             ],
           ]);
 

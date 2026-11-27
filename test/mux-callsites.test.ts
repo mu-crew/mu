@@ -4,7 +4,7 @@
 // The distinction is the whole point of the migration. With a second
 // backend in play, "no multiplexer reachable" stops being a
 // misconfigured-box edge case and becomes a routine state (the user
-// has herdr, mu detected tmux, or neither is running). So:
+// has Rex, mu detected tmux, or neither is running). So:
 //
 //   - Load-bearing (spawn / send / read / kill / session create):
 //     `NoMultiplexerError` must propagate. handle() maps it to exit 5.
@@ -27,7 +27,7 @@ import { resolveWorkerIdentity } from "../src/tasks/claim.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream, listWorkstreams, summarizeWorkstream } from "../src/workstream.js";
 import { insertTestAgent as insertAgent } from "./_agent-pane.js";
-import { fakePane, installUnreachableMux } from "./_mux.js";
+import { fakePane, installUnreachableMux, REX_PANE } from "./_mux.js";
 import { withServerIdentity } from "./_verbs-mock.js";
 
 let tempDir: string;
@@ -114,16 +114,16 @@ describe("load-bearing call sites propagate NoMultiplexerError", () => {
   });
 
   it("sendToAgent throws — a send that reaches no pane is a failed send", async () => {
-    // Only herdr has sendToPane; a non-pi agent's send is the mux-load-bearing one.
+    // Only Rex has sendToPane; a non-pi agent's send is the mux-load-bearing one.
     ensureWorkstream(db, "alpha");
-    insertAgent(db, { name: "worker-1", workstream: "alpha", paneId: "w1:p1", cli: "claude" });
-    const herdr = installUnreachableMux("herdr", () => new NoMultiplexerError(["herdr"]));
+    insertAgent(db, { name: "worker-1", workstream: "alpha", paneId: REX_PANE, cli: "claude" });
+    const rex = installUnreachableMux("rex", () => new NoMultiplexerError(["rex"]));
     try {
       await expect(
         sendToAgent(db, "worker-1", "hi", { workstream: "alpha" }),
       ).rejects.toBeInstanceOf(NoMultiplexerError);
     } finally {
-      herdr.restore();
+      rex.restore();
     }
   });
 

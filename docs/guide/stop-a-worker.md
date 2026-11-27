@@ -38,7 +38,7 @@ Escape in the pane. The session and its context stay.
 - A turn ended by an abort carries no final text, so no `CLOSE:` block from
   it is applied.
 
-On herdr and Rex, a non-pi agent has no abort: close it.
+On Rex, a non-pi agent has no abort: close it.
 
 To give the agent new work after the abort, send with `--fresh` (on `hooks`,
 the harness's fresh command and then the text). See
@@ -62,7 +62,7 @@ replaced while the close was running, the replacement is left alone
 (`AgentReplacedError`).
 
 Close kills the pane and deletes the agent row. It is also the step
-for a turn that will not stop, and for a non-pi agent on herdr or Rex,
+for a turn that will not stop, and for a non-pi agent on Rex,
 which mu cannot abort. To prevent a
 worker stuck on an unbounded `find /` or a busy-wait loop, scope worker
 prompts to the worktree. Do not ask for filesystem-wide `find` or

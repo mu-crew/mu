@@ -10,7 +10,7 @@
 // multiplexer is a stub (test/_plugin-host.ts); the "forward" is a fake pi extension bound at
 // the derived local socket when the view opens. Nothing reaches a real host or sshd.
 
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,7 +27,6 @@ import {
   setMurmurPaneRunnerForTests,
 } from "../src/channels/hooks-pane.js";
 import { channelTarget } from "../src/channels/index.js";
-import { classifyError } from "../src/cli/handle.js";
 import { cmdWait } from "../src/cli/wait.js";
 import { ctlSocketPath, remoteCtlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
@@ -36,7 +35,6 @@ import {
   admitHostChannel,
   HOST_ENV_KEYS,
   HostChannelBusyError,
-  HostSpawnUnsupportedError,
   listHostChannels,
   releaseHostChannel,
 } from "../src/hosts.js";
@@ -51,7 +49,6 @@ import { INC, withHello } from "./_ctl-ext.js";
 import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
 import { type FakeRemoteNode, fakeRemoteNode } from "./_fake-remote-node.js";
 import { copyGitFixture, gitIn as git } from "./_git.js";
-import { installMux } from "./_mux.js";
 import { fakePlugin, jobSeams, linkSeam } from "./_plugin.js";
 import { CLOUD, pluginHostFixture } from "./_plugin-host.js";
 import { FAKE_SERVER_IDENTITY } from "./_verbs-mock.js";
@@ -420,40 +417,6 @@ describe("reattaching a detached ctl view (review_plugin_reattach_stale_ctl)", (
     expect(r).toMatchObject({ ready: false, ctl: "missing" });
     expect(h.panes.has(r.pane_id)).toBe(true);
   });
-
-  it.each(["preview", "apply"] as const)(
-    "herdr refuses detached-view reattach %s before effects",
-    async (mode) => {
-      const sock = await spawnThenKillView({ on: true });
-      writeFileSync(sock, "stale forward");
-      const ifRevision = agentRevision(h.db, "ws", "w1");
-      const mux = installMux("herdr", []);
-      try {
-        const requests = h.f.calls();
-        const row = getAgent(h.db, "w1", "ws");
-        const jobs = listCarrierJobs(h.db);
-        const ops = h.db.prepare("SELECT * FROM ops").all();
-        const reattach =
-          mode === "preview"
-            ? previewReattach(h.db, "ws", "w1")
-            : reattachAgent(h.db, "ws", "w1", { ifRevision });
-        const err = await reattach.catch((e: unknown) => e);
-        expect(err).toBeInstanceOf(HostSpawnUnsupportedError);
-        expect(classifyError(err).exitCode).toBe(2);
-        expect((err as Error).message).toMatch(
-          /herdr.*detached job view command.*use tmux \(lease and plugin job views are tmux-only/,
-        );
-        expect(readFileSync(sock, "utf8")).toBe("stale forward");
-        expect(h.f.calls()).toEqual(requests);
-        expect(mux.calls).toEqual([]);
-        expect(getAgent(h.db, "w1", "ws")).toEqual(row);
-        expect(listCarrierJobs(h.db)).toEqual(jobs);
-        expect(h.db.prepare("SELECT * FROM ops").all()).toEqual(ops);
-      } finally {
-        mux.restore();
-      }
-    },
-  );
 
   it("the stale socket stays while the old view is still open (the refusal comes first)", async () => {
     await staticPlugin({ view: "detached" });

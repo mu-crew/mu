@@ -17,7 +17,7 @@ import { listLogs } from "../src/logs.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withHello } from "./_ctl-ext.js";
-import { installMux, type MuxHarness } from "./_mux.js";
+import { installMux, type MuxHarness, REX_PANE, rexSendExecutor } from "./_mux.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 const SINCE = Date.parse("2026-10-05T06:00:00.000Z");
@@ -90,10 +90,10 @@ describe("agent.send op", () => {
     expect(op && renderOp(op)).toMatchObject({ verb: "agent send", subject: "worker-1" });
   });
 
-  it("herdr prompt (non-pi): mode=plain transport=mux, no state", async () => {
+  it("Rex send (non-pi): mode=plain transport=mux, no state", async () => {
     mux.restore();
-    mux = installMux("herdr", [["agent prompt", "{}"]]);
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "w1:p1", cli: "claude" });
+    mux = installMux("rex", rexSendExecutor());
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: REX_PANE, cli: "claude" });
     const r = await runCli(["agent", "send", "worker-1", "go", "-w", "auth"], dbPath);
     expect(r.exitCode).toBeNull();
     expect(sendOps().map((o) => o.payload)).toEqual([
@@ -103,8 +103,8 @@ describe("agent.send op", () => {
 
   it("counts UTF-8 bytes, not UTF-16 code units", async () => {
     mux.restore();
-    mux = installMux("herdr", [["agent prompt", "{}"]]);
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "w1:p1", cli: "claude" });
+    mux = installMux("rex", rexSendExecutor());
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: REX_PANE, cli: "claude" });
     // "é" is 2 bytes and "🚀" is 4 bytes in UTF-8 (String.length: 1 and 2).
     const r = await runCliJson(
       ["agent", "send", "worker-1", "é🚀", "--json", "-w", "auth"],

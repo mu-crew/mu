@@ -72,11 +72,11 @@ describe("murmurDoctorCheck (per-tick, no live hello)", () => {
     });
   });
 
-  it("uses herdr as the agent-state source without checking murmur", () => {
+  it("uses Rex as the agent-state source without checking murmur", () => {
     process.env.PATH = join(tempDir, "empty-bin");
 
-    const murmur = murmurDoctorCheck("herdr");
+    const murmur = murmurDoctorCheck("rex");
 
-    expect(murmur).toEqual({ name: "murmur", status: "ok", detail: "agent state from herdr" });
+    expect(murmur).toEqual({ name: "murmur", status: "ok", detail: "agent state from rex" });
   });
 });

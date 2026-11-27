@@ -523,7 +523,7 @@ describe("mu agent wait on a pi agent", () => {
 describe("wait --stuck-after for a pi owner", () => {
   // ctl's idle is exact and lands after the close nudge, so the default
   // threshold for a ctl owner is seconds, not the 120 s debounce that
-  // screen-scraped murmur/herdr readings need.
+  // screen-scraped murmur readings need.
   const waitOnPia = async (opts: { stuckAfterMs?: number } = {}) => {
     addTask(db, { localId: "t1", workstream: WS, title: "T", impact: 50, effortDays: 1 });
     await claimTask(db, "t1", { workstream: WS, agentName: "pia" });

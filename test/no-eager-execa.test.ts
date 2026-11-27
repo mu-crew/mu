@@ -23,8 +23,8 @@ describe("execa stays off the startup path", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the tmux/herdr/murmur executors do not load execa at all", () => {
-    for (const f of ["mux/tmux.ts", "mux/herdr.ts", "agent-state.ts"]) {
+  it("the tmux/Rex/murmur executors do not load execa at all", () => {
+    for (const f of ["mux/tmux.ts", "mux/rex.ts", "agent-state.ts"]) {
       const src = readFileSync(join(__dirname, "..", "src", f), "utf8");
       expect(src, f).not.toMatch(/import\(["']execa["']\)/);
     }

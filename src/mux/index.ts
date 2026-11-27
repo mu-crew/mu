@@ -2,17 +2,6 @@
 
 export { activeMux, detectMux, muxByName, resetMux, setMuxForTests } from "./detect.js";
 export {
-  HerdrCommandOverrideError,
-  HerdrError,
-  HerdrSyntaxError,
-  HerdrUnsupportedCliError,
-  HerdrWorkspaceGroupCloseError,
-  herdrBackend,
-  isHerdrStatusUsable,
-  resetHerdrExecutor,
-  setHerdrExecutor,
-} from "./herdr.js";
-export {
   RexError,
   resetRexExecutor,
   rexBackend,

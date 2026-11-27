@@ -64,8 +64,6 @@ export function pluginHostFixture(opts: { handshakeInProcess?: boolean } = {}): 
     setMuxForTests({
       ...tmuxBackend,
       serverIdentity: async () => FAKE_SERVER_IDENTITY,
-      runsShellCommand: true,
-      spawnAgentWaitsReady: false,
       anchorsPanes: false,
       ensureSession: async () => ({ created: false }) as never,
       spawnAgent: async (o) => {

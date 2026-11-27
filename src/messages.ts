@@ -162,7 +162,7 @@ export const MESSAGES = {
   "agent.empty_send": (name: string) =>
     `agent ${name} runs pi: an empty message cannot go over the control socket; press Enter in the pane yourself`,
   "agent.send_unsupported": (name: string, cli: string) =>
-    `agent ${name} runs ${cli}, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr), start it with the prompt as an argument (--command "${cli} '<prompt>'"), or use pi`,
+    `agent ${name} runs ${cli}, not pi: tmux has no reliable send for it; spawn it on Rex (MU_MUX=rex), start it with the prompt as an argument (--command "${cli} '<prompt>'"), or use pi`,
   "agent.send_refused": (reason: string) => `control socket refused the send: ${reason}`,
   "agent.empty_send_on": (name: string, channel: string) =>
     `agent ${name} is on the ${channel} channel: an empty message submits nothing; press Enter in the pane yourself`,
@@ -403,18 +403,6 @@ export const MESSAGES = {
     "no tmux server is running, and mu will not start one from inside an agent: every pane would inherit this agent's sandbox. Start tmux from a terminal (tmux new-session -d), then retry",
   "mux.tmux_failed": (args: readonly string[], exit: number | null, detail: string) =>
     `tmux ${args.join(" ")} failed (exit ${exit}): ${detail}`,
-  "mux.herdr_failed": (args: readonly string[], exit: number | null, detail: string) =>
-    `herdr ${args.join(" ")} failed (exit ${exit}): ${detail}`,
-  "mux.herdr_syntax": (args: readonly string[], firstLine: string) =>
-    `herdr rejected the command line (exit 2) — this is a bug in mu, not a herdr outage. Ran: herdr ${args.join(" ")}. herdr said: ${firstLine}`,
-  "mux.herdr_unsupported_cli": (cli: string, detail: string) =>
-    `herdr does not recognise --cli ${cli} as an interactive agent kind, so it cannot classify that pane's status. herdr said: ${detail}`,
-  "mux.herdr_command_override": (cli: string, what: string) =>
-    `${what} cannot be honoured on the herdr backend: 'herdr agent start --kind ${cli}' resolves the executable itself and has no override flag. mu refuses rather than starting a different binary than you asked for.`,
-  "mux.herdr_group_close": (workspaceId: string, session: string, detail: string) =>
-    `herdr refused to close workspace ${workspaceId} (${session}): it has linked worktree workspaces, which mu did not create and will not close on your behalf. herdr said: ${detail}`,
-  "mux.herdr_no_panes": (tab: string, session: string) =>
-    `spawnAgent: tab ${tab} in session ${session} has no panes to split (it vanished mid-spawn?)`,
   "mux.rex_failed": (args: readonly string[], exit: number | null, detail: string) =>
     `rex ${args.join(" ")} failed (exit ${exit}): ${detail}`,
   "mux.rex_unsupported_shell": (shell: string) =>
@@ -422,6 +410,8 @@ export const MESSAGES = {
   "mux.rex_no_bracketed_paste": (pane: string) =>
     `rex pane ${pane} has not turned on bracketed paste, so a multi-line send would submit line by line; send one line, or start the agent with a CLI that reads pastes`,
   "mux.unknown_backend": (name: string) => `unknown mux backend: ${name}`,
+  "mux.herdr_retired": () =>
+    "MU_MUX=herdr: mu 6 no longer drives herdr; use MU_MUX=tmux or MU_MUX=rex (existing herdr rows are kept, never reaped)",
   "sync.peer_not_found": (ref: string, known: readonly string[]) =>
     `no peer matches ${JSON.stringify(ref)}${
       known.length === 0 ? " (no peers discovered)" : ` (known peers: ${known.join(", ")})`
@@ -436,8 +426,6 @@ export const MESSAGES = {
     `host profile ${host} already exists: remove it first (mu host rm ${host})`,
   "host.in_use": (host: string, holders: readonly string[]) =>
     `host ${host} still holds channels (${holders.join(", ")}): close those agents first`,
-  "host.spawn_unsupported": (host: string, mux: string, part: string, tmuxOnly: boolean) =>
-    `host ${host}: ${mux} starts agents itself and cannot run the ${part} in a pane; use tmux${tmuxOnly ? " (lease and plugin job views are tmux-only for now)" : " or Rex"}`,
   "host.carrier_view_unsupported": (host: string, mux: string, what: string) =>
     `host ${host}: ${what} on ${mux} refused before anything ran: lease and plugin job views require tmux for now (${mux} support awaits instance-bound server identity); use MU_MUX=tmux for this workstream`,
   "host.harness_missing": (host: string, harness: string, probedAt: string) =>
@@ -537,7 +525,7 @@ export const MESSAGES = {
   "remote.collect_failed": (host: string, detail: string) =>
     `host ${host}: collect failed: ${detail}`,
   "agent.backend_mismatch": (ws: string, active: string, existing: string, agent: string) =>
-    `workstream ${ws} already has agent ${agent} on ${existing}, and this run uses ${active}; nothing was spawned. Set MU_MUX=${existing} to join it, or use a new workstream on ${active}.`,
+    `workstream ${ws} already has agent ${agent} on ${existing}, and this run uses ${active}; nothing was spawned. ${existing === "herdr" ? "mu 6 no longer drives herdr and keeps that row as is; use" : `Set MU_MUX=${existing} to join it, or use`} a new workstream on ${active}.`,
   "agent.reattach_refused": (name: string, why: string, close: string) =>
     `agent ${name} cannot be reattached: ${why}; nothing was changed. Preview its close: ${close}`,
   "agent.reattach_failed": (

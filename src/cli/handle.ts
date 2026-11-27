@@ -107,19 +107,11 @@ import {
   HostInUseError,
   HostNotFoundError,
   HostProfileError,
-  HostSpawnUnsupportedError,
 } from "../hosts.js";
 import { HumanNeededInvalidError } from "../human-needed.js";
 import { MuleDispatchStillExitingError } from "../local-loop.js";
 import { GroupIdAmbiguousError, GroupNotFoundError, LogKindReservedError } from "../logs.js";
-import {
-  HerdrCommandOverrideError,
-  HerdrUnsupportedCliError,
-  HerdrWorkspaceGroupCloseError,
-  MuxError,
-  NoMultiplexerError,
-  PaneNotFoundError,
-} from "../mux.js";
+import { MuxError, NoMultiplexerError, PaneNotFoundError } from "../mux.js";
 import { NextArgError } from "../next.js";
 import { capPlan, computeNext, NEXT_BYTES, type NextOutcome } from "../next-hints.js";
 import {
@@ -484,8 +476,6 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof HostProfileError ||
     // collect on an agent with no remote worktree of its own.
     err instanceof RemoteCollectUnsupportedError ||
-    // The active mux cannot run a profile's shell template: refused before any effect.
-    err instanceof HostSpawnUnsupportedError ||
     // D15: a lease or plugin view on a backend without carrierViews (Rex): before any effect.
     err instanceof CarrierViewUnsupportedError ||
     // The host's recorded probe found no such harness, or a remote brief too large for its
@@ -504,19 +494,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // A blank reason or missing caller identity for `mu human-needed`.
     err instanceof HumanNeededInvalidError ||
     // A check's --by, brief or verdict text that cannot be recorded.
-    err instanceof CheckArgError ||
-    // The operator asked the ACTIVE backend for something it cannot do:
-    // a `--cli` the mux does not recognise as an agent kind, or a
-    // `--command` / `MU_<CLI>_COMMAND` override it cannot honour. The
-    // substrate is healthy and answered precisely, so this is the usage
-    // lane, not the exit-5 "mux is down" lane. Both refuse BEFORE any
-    // side effect.
-    err instanceof HerdrUnsupportedCliError ||
-    err instanceof HerdrCommandOverrideError ||
-    // herdr refused to close a workspace with linked worktree
-    // workspaces. Same lane: the substrate answered precisely and only
-    // the operator can decide whether those siblings may die.
-    err instanceof HerdrWorkspaceGroupCloseError
+    err instanceof CheckArgError
   ) {
     return { label: "error", exitCode: 2 };
   }

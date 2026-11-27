@@ -5,16 +5,14 @@
 // `activeMux`).
 
 import { say } from "../messages.js";
-import { herdrBackend } from "./herdr.js";
 import { insideRex, rexBackend } from "./rex.js";
 import { tmuxBackend } from "./tmux.js";
 import { type MuxBackend, type MuxBackendName, NoMultiplexerError } from "./types.js";
 
 /** Every backend mu knows about, in detection-precedence order. tmux is
- *  the incumbent and wins pure availability ties; herdr is selected by
- *  the narrower `$HERDR_ENV` ambient signal and Rex by a Rex terminal
- *  (see `detectMux`). */
-const BACKENDS: readonly MuxBackend[] = [tmuxBackend, herdrBackend, rexBackend];
+ *  the incumbent and wins pure availability ties; Rex is selected by a Rex
+ *  terminal (see `detectMux`). herdr was retired in mu 6 (src/mux/binding.ts). */
+const BACKENDS: readonly MuxBackend[] = [tmuxBackend, rexBackend];
 
 /** Look up a backend by name. Throws on unknown name. Backs `MU_MUX`. */
 export function muxByName(name: MuxBackendName): MuxBackend {
@@ -36,11 +34,9 @@ const KNOWN_NAMES: readonly string[] = BACKENDS.map((b) => b.name);
  *      unknown value throws rather than silently falling through: a
  *      typo'd backend name should fail loud, not quietly run on tmux.
  *   2. Ambient signal    — an env var proving the CALLER is already
- *      inside a managed pane of that mux ($HERDR_ENV for herdr, $TMUX
- *      or $TMUX_PANE for tmux, $REX_SESSION with TERM_PROGRAM=rex for Rex). The most specific signal wins, since a
- *      mux can run nested inside another: herdr panes routinely host a
- *      tmux server, so BOTH sets of vars can be present at once and
- *      $HERDR_ENV — the narrower claim — is checked first.
+ *      inside a managed pane of that mux ($TMUX or $TMUX_PANE for tmux,
+ *      $REX_SESSION with TERM_PROGRAM=rex for Rex). The most specific
+ *      signal wins, since tmux can run nested inside Rex.
  *   3. Availability      — whichever backend's binary actually runs.
  *      Ties break in BACKENDS order (tmux is the incumbent).
  *   4. Throw `NoMultiplexerError`.
@@ -54,15 +50,9 @@ const KNOWN_NAMES: readonly string[] = BACKENDS.map((b) => b.name);
 export async function detectMux(): Promise<MuxBackend> {
   const override = process.env.MU_MUX;
   if (override !== undefined && override.length > 0) {
+    if (override === "herdr") throw new Error(say("mux.herdr_retired"));
     return muxByName(override as MuxBackendName);
   }
-
-  // herdr FIRST. herdr can run inside tmux and vice versa, so both
-  // signals can be live simultaneously; `$HERDR_ENV=1` is the narrower
-  // one (herdr sets it only in panes IT manages) and must win. The
-  // exact-"1" comparison is what `herdr --skill` mandates: any other
-  // value, including "0" or "true", is not the documented contract.
-  if (process.env.HERDR_ENV === "1") return herdrBackend;
 
   // Both vars, not just $TMUX: tmux sets $TMUX_PANE in every pane too,
   // and some setups (sudo -E, direnv, ssh with a restrictive SendEnv)
@@ -70,7 +60,7 @@ export async function detectMux(): Promise<MuxBackend> {
   // tmux pane, which is what this step is asking.
   if (process.env.TMUX || process.env.TMUX_PANE) return tmuxBackend;
 
-  // A Rex terminal, last: tmux or herdr run inside Rex, never the reverse,
+  // A Rex terminal, last: tmux runs inside Rex, never the reverse,
   // and both set their own vars in their panes ($REX_SESSION is inherited).
   if (insideRex()) return rexBackend;
 

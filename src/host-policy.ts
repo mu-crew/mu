@@ -375,7 +375,7 @@ export async function proveViewGone(r: CarrierJob, mux?: MuxBackend): Promise<Vi
  * has no `carrierViews`: its proof is never trusted, whichever mux this invocation drives.
  */
 function unprovableOn(server: string | null): MuxBackendName | undefined {
-  const name = /^(tmux|rex|herdr):/.exec(server ?? "")?.[1] as MuxBackendName | undefined;
+  const name = /^(tmux|rex):/.exec(server ?? "")?.[1] as MuxBackendName | undefined;
   return name !== undefined && !muxByName(name).carrierViews ? name : undefined;
 }
 

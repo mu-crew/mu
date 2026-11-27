@@ -65,7 +65,6 @@ describeIfTmux(
         name,
         cli: "pi",
         command: SLEEP,
-        commandSource: "cli-key",
         env: {},
         ...(onPaneCreated ? { onPaneCreated } : {}),
       });
@@ -290,7 +289,6 @@ describeIfTmux(
         name: "retained",
         cli: "sh",
         command: `printf %s ${shellWord(text)} > ${shellWord(commandOut)}\n  printf %s "$MULTILINE" > ${shellWord(envOut)}`,
-        commandSource: "cli-key",
         env: { MULTILINE: text },
         retainOnExit: true,
       });

@@ -1,7 +1,7 @@
 // Every typed error the CLI maps to an exit code is part of the SDK
 // surface: an SDK caller must be able to `instanceof` what mu throws.
-// Errors defined inside src/cli/ are CLI-only; herdr's live on the `mux`
-// namespace export.
+// Errors defined inside src/cli/ are CLI-only; the backends' (`RexError`) live
+// on the `mux` namespace export.
 
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

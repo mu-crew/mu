@@ -8,8 +8,7 @@
 // has `pasteToPane` (clear the input line, one bracketed paste, Enter) and
 // `sendKeys`, which only the `hooks` channel (src/channels/hooks.ts) uses: a
 // paste cannot confirm itself, and there the harness's own hook event does.
-// pi agents use the control socket (src/channels/ctl-deliver.ts); herdr has
-// its own atomic `agent prompt`.
+// pi agents use the control socket (src/channels/ctl-deliver.ts).
 
 import { basename } from "node:path";
 import { execFileCapture } from "../exec-file.js";
@@ -1064,8 +1063,6 @@ export async function healthCheck(): Promise<MuxHealth> {
  */
 export const tmuxBackend: MuxBackend = Object.freeze({
   name: "tmux" as const,
-  spawnAgentWaitsReady: false,
-  runsShellCommand: true,
   anchorsPanes: true,
   carrierViews: true,
   available: tmuxAvailable,

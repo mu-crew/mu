@@ -10,13 +10,7 @@ import stringWidth from "string-width";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runtimeKey } from "../src/agent-state.js";
 import { App } from "../src/cli/tui/app.js";
-import {
-  copyCommand,
-  planAttach,
-  runAttach,
-  type StepRunner,
-  yankSequence,
-} from "../src/cli/tui/commands.js";
+import { copyCommand, runAttach, type StepRunner, yankSequence } from "../src/cli/tui/commands.js";
 import { clampTop, notesLines, runtimeLine, wrap } from "../src/cli/tui/drill.js";
 import { createRuntime, type DashboardRuntime } from "../src/cli/tui/runtime.js";
 import { type Line, lineText } from "../src/cli/tui/text.js";
@@ -30,7 +24,6 @@ import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { renderApp } from "./_ink-render.js";
 import { installMux, installNoMux, type MuxHarness } from "./_mux.js";
-import { TAB_LIST, WORKSPACE_LIST } from "./_mux-fixtures.js";
 
 const ESC = "\u001b";
 /** The screen with wrapped lines joined: a wrap may split a phrase across lines. */
@@ -936,33 +929,6 @@ describe("attach", () => {
     });
   });
 
-  it("inside herdr the copied line opens a client from outside, TMUX set or not", async () => {
-    for (const tmuxEnv of [undefined, "/tmp/tmux-1/x,1,0"]) {
-      await withEnv("TMUX", tmuxEnv, () =>
-        withEnv("HERDR_ENV", "1", () =>
-          withEnv("MU_HERDR_SESSION", "priv", async () => {
-            mux = installMux("herdr", [
-              ["workspace list", WORKSPACE_LIST.replace("mu-topotest", "mu-ws")],
-              ["tab list --workspace w1", TAB_LIST],
-            ]);
-            const plan = await planAttach({
-              workstream: "ws",
-              name: "w1",
-              tab: "mytab",
-              paneId: "w1:p1",
-            });
-            if (!plan.ok) throw new Error(plan.reason);
-            // Executed here (inside a client): focus only. Copied: focus, then a client.
-            expect(plan.steps).toHaveLength(1);
-            expect(plan.line).toBe("herdr --session priv tab focus w1:t2 && herdr --session priv");
-            mux.restore();
-            mux = undefined;
-          }),
-        ),
-      );
-    }
-  });
-
   it("no multiplexer at all: scrollback opens with the reason, nothing runs", async () => {
     await withEnv("TMUX", undefined, () =>
       withEnv("TMUX_PANE", undefined, () =>
@@ -989,34 +955,6 @@ describe("attach", () => {
         ),
       ),
     );
-  });
-
-  it("herdr: both steps run in order, outside a client", async () => {
-    db.prepare("UPDATE agents SET pane_id = 'w1:p1', pane_identity = NULL WHERE name = 'w1'").run();
-    await withEnv("HERDR_ENV", undefined, async () => {
-      mux = installMux("herdr", [
-        ["workspace list", WORKSPACE_LIST.replace("mu-topotest", "mu-ws")],
-        ["tab list --workspace w1", TAB_LIST],
-      ]);
-      const ran: MuxCommand[] = [];
-      const ui = await open(async (s) => {
-        ran.push(s);
-        return { code: 0, stderr: "" };
-      });
-      await toAgents(ui);
-      await ui.press("a");
-      await ui.until(() => ran.length === 2);
-      expect(ran.map((s) => s.args)).toEqual([["workspace", "focus", "w1"], []]);
-      ui.unmount();
-    });
-  });
-
-  it("herdr with no workspace for the session: a reason and no line", async () => {
-    const empty = JSON.stringify({ id: "x", result: { type: "workspace_list", workspaces: [] } });
-    mux = installMux("herdr", [["workspace list", empty]]);
-    const plan = await planAttach({ workstream: "gone", name: "w1", tab: null, paneId: "w1:p1" });
-    expect(plan.ok).toBe(false);
-    expect(plan.line).toBeNull();
   });
 
   it("keys pressed during an attach are not replayed into the next screen", async () => {

@@ -251,7 +251,7 @@ host or a `--plugin` profile whose plugin declares `job`) runs in this
 order, each step before the next one's effect:
 
 1. Refusals, before anything is written: a field the kind does not
-   `honours`, a backend that cannot run a command line (herdr) or cannot
+   `honours`, a backend that cannot
    bind a reply to its server instance (Rex, for now: views are tmux-only), an
    `at-start` kind without a first prompt (`--send` or `--task`) or without
    its own `channel`, and, on a kind without `channel`, a `--command` that

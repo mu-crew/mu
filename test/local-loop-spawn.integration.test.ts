@@ -29,13 +29,7 @@ import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { acquireHost } from "../src/host-lifecycle.js";
-import {
-  addHost,
-  HostHandbackError,
-  HostProfileError,
-  HostSpawnUnsupportedError,
-  listHostChannels,
-} from "../src/hosts.js";
+import { addHost, HostHandbackError, HostProfileError, listHostChannels } from "../src/hosts.js";
 import { setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { reconcile } from "../src/reconcile.js";
@@ -572,11 +566,11 @@ it.each([false, true])(
   },
 );
 
-it.each(["template", "other plugin", "provider", "herdr", "other harness", "orchestrator"])(
+it.each(["template", "other plugin", "provider", "other harness", "orchestrator"])(
   "refuses %s before a tree, pane or reservation",
   async (kind) => {
     let req = spawn;
-    let error: typeof HostProfileError | typeof HostSpawnUnsupportedError = HostProfileError;
+    const error = HostProfileError;
     let other: FakePlugin | undefined;
     if (kind === "template") {
       addHost(db, {
@@ -595,15 +589,6 @@ it.each(["template", "other plugin", "provider", "herdr", "other harness", "orch
         await acquireHost(db, { name: "plain", provider: "fake", params: {}, repo: remote });
       else addHost(db, { name: "plain", repo: remote, plugin: "fake", max_sessions: 1 });
       req = { ...req, mule: "plain" };
-    } else if (kind === "herdr") {
-      error = HostSpawnUnsupportedError;
-      setMuxForTests({
-        ...tmuxBackend,
-        name: kind,
-        spawnAgent: pane,
-        runsShellCommand: false,
-        carrierViews: false,
-      });
     }
     const calls = mule.calls();
     const otherCalls = other?.calls();

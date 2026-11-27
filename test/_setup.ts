@@ -3,10 +3,8 @@
 // - Every MU_* var is deleted (a developer's shell exporting MU_PI_COMMAND or
 //   MU_IDLE_THRESHOLD_MS would silently change SDK behaviour under every
 //   test). Tests that need one opt IN with `process.env.X = ...` or
-//   `withEnv()`. MU_HERDR_SESSION is allowlisted: it routes herdr calls to a
-//   NAMED server, and wiping it would make herdr integration tests
-//   unrunnable and let a stray call reach the user's real panes. tmux
-//   settings come from this run's global setup, not the parent shell.
+//   `withEnv()`. tmux settings come from this run's global setup, not
+//   the parent shell.
 // - XDG_CACHE_HOME / XDG_STATE_HOME / XDG_CONFIG_HOME point at a per-fork dir
 //   under the per-run scratch dir that globalSetup creates and removes
 //   (test/_global-teardown.ts): forks are killed without their "exit"
@@ -30,13 +28,8 @@ import { installRealDirGuard, realMuDirs } from "./_real-dir-guard.js";
 import { RUN_ROOT_KEY } from "./_run-root.js";
 import { setServerRoot, TMUX_SOCKET_KEY } from "./_server-registry.js";
 
-const ALLOWED: ReadonlySet<string> = new Set([
-  // The herdr equivalent: an isolated named herdr server.
-  "MU_HERDR_SESSION",
-]);
-
 for (const key of Object.keys(process.env)) {
-  if (key.startsWith("MU_") && !ALLOWED.has(key)) {
+  if (key.startsWith("MU_")) {
     delete process.env[key];
   }
 }
@@ -72,7 +65,7 @@ for (const key of ["REX_SESSION", "REX_BLOCK", "REX_SERVER", "REX_BIN_DIR", "REX
 // $TMUX_PANE (a shell inside tmux) or a working `tmux -V`; the files that mock
 // the tmux executor answer neither, so they failed from a plain shell or SSH
 // session (rr_r6_tmux_gate_env). Tests of detection itself clear MU_MUX
-// (test/mux-detect.test.ts); herdr tests set theirs.
+// (test/mux-detect.test.ts); Rex tests set theirs.
 process.env.MU_MUX = "tmux";
 
 // Baseline: no real muzzle. An agent read off ctl asks `muzzle status --json`

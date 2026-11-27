@@ -65,7 +65,7 @@ track them; delete the row when one ships.
 
 | Item | Gap today | Shape | Size |
 | --- | --- | --- | --- |
-| **Tag mux sessions with their DB** | `teardown --empty` never removes a `mu-*` session that has no DB row, because another DB may own it. | Set `@mu_db=<abs path>` at session creation. Remove unregistered sessions whose tag matches this DB, and keep foreign or untagged ones. Optional mux method, since herdr may have no equivalent. | ~60 LOC |
+| **Tag mux sessions with their DB** | `teardown --empty` never removes a `mu-*` session that has no DB row, because another DB may own it. | Set `@mu_db=<abs path>` at session creation. Remove unregistered sessions whose tag matches this DB, and keep foreign or untagged ones. An optional mux method. | ~60 LOC |
 | **Token usage per run** | Orchestrators cannot budget a fan-out. | The extension reports pi's usage for the run, and `wait --json` carries it. Unknown stays unknown, never 0. No dollar estimates. | ~80 LOC |
 | **Design-doc review angles** | [adversarial-review](../skills/mu/recipes/adversarial-review.md) reviews diffs, not design docs. | Add rollout and back-compat, alternatives, and integration angles. Synthesize into unanimous findings, tensions, and the strongest objection. | recipe |
 | **Sender framing on sends** | The receiving agent cannot tell a peer's message from its human's. | Prefix text sent by a mu agent with `[mu: from <agent>]`. This touches prompts, so it follows logging the sender. | ~20 LOC |
@@ -75,7 +75,7 @@ track them; delete the row when one ships.
 | **Delegate answers read elsewhere** | Answers read through `mu task notes` are re-announced as "not shown" after an interrupt. | Mark a call delivered when its answer reaches the caller by a `mu wait` result too. | ~30 LOC |
 | **Placement visibility** (placement spec §D) | The TUI has no placement columns or Hosts tab; murmur has no host dedup or picker routes; host notices are not unified; the pane-option mirror stops at `@mu_host`; there is no host init wizard. | One follow-up: placement in the TUI and murmur, one host-notice path, a wizard over `mu host init`. Deferred so the core ships first. Promote when users cannot tell where an agent runs. | follow-up |
 | **Placement durability** (spec §D, §3.3, §9.4) | No durable backend binding for a workstream (the one-backend rule is advisory), no push for static links (mu never fetches or pushes for a static host), no durable named gates (`plugin_mule_gate`), no atomic cross-DB claim. | Each needs a schema or a credential decision. Promote on a second real race, lost base or lost gate. | per item |
-| **Placement reach** (spec §D) | claude and codex in a remote workspace (MCP), a remote workspace on a provisioned host, herdr and Rex parity smokes, `mu_delegate` refused in a remote pi (R5). | Cut from the first release, none ruled out. Promote each when a user hits the gap twice. | per item |
+| **Placement reach** (spec §D) | claude and codex in a remote workspace (MCP), a remote workspace on a provisioned host, Rex parity smokes, `mu_delegate` refused in a remote pi (R5). | Cut from the first release, none ruled out. Promote each when a user hits the gap twice. | per item |
 | **Rex carrier views** (`rex_plugin_views_instance_bound`) | Lease and plugin job views are tmux-only (D15): Rex samples `server.status` around a separate RPC, so a retargeted socket alias lets another server answer a view's birth or absence. | Rex replies carry the answering instance (a Rex change), then set `rexBackend.carrierViews` and smoke lease and plugin job views on two private servers. | ~1 day once Rex ships it |
 | **Subscription-based wakeups** | `mu log --tail` polls once a second. | SQLite update hooks or `fs.watch` on the WAL. Lower latency for more machinery. | — |
 
@@ -120,7 +120,7 @@ track them; delete the row when one ships.
   (`worker-1`, `reviewer-1`).
 - **Pane scraping as a state fallback.** No state source means `unknown`.
 - **Runtime agent state in `mu.db`.** The copy goes stale. The control
-  socket, herdr, Rex, or murmur owns the current reading.
+  socket, Rex, or murmur owns the current reading.
 - **Reading murmur's `state.db`.** Use its public contract.
 - **murmur as a hard dependency.** pi agents and the task graph do not
   need it.

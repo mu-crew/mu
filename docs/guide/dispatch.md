@@ -118,13 +118,10 @@ with `mu agent answer`). See
 [other agent CLIs](other-agent-clis.md#run-one-as-a-worker). Any other CLI
 on tmux exits 4 (`AgentSendUnsupportedError`).
 
-On herdr, mu sends the text with herdr's atomic `agent prompt`. On Rex, mu
-pastes it and then presses Enter; a multi-line text needs the agent to have
-turned on bracketed paste (claude and codex do), otherwise the send is
+On Rex, mu pastes the text and then presses Enter; a multi-line text needs
+the agent to have turned on bracketed paste (claude and codex do), otherwise the send is
 refused. To start a new session there, send the harness's fresh command
 (claude `/clear`, codex `/new`, cursor-agent `/new-chat`), then the prompt.
-If mu prints `warning: ... was NOT submitted`, the agent has not seen the
-text. Read the pane before you wait.
 
 ## Write the brief
 

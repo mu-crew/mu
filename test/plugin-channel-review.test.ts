@@ -29,7 +29,6 @@ import {
 import type { ChannelImpl, ChannelObservation } from "../src/channels/types.js";
 import { openDb } from "../src/db.js";
 import { acquireHost } from "../src/host-lifecycle.js";
-import { HostSpawnUnsupportedError } from "../src/hosts.js";
 import { jobUp } from "../src/jobs/kinds.js";
 import { loadPluginChannels, pluginChannel } from "../src/plugins/channel.js";
 import { EffectOutcomeUnknownError, PluginRefusedError } from "../src/plugins/errors.js";
@@ -117,32 +116,6 @@ describe("ruling 2: a failed view never passes for a spawned or reattached one",
       /reattach failed/,
     );
     expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(a.paneId);
-  });
-
-  it("reattach refuses on a backend that cannot run a view; a view is never labelled cli-key", async () => {
-    await h.setup({ view: "detached" });
-    const sources: string[] = [];
-    h.stubMux();
-    const spawned = await h.spawn();
-    h.panes.delete(spawned.paneId);
-    const p = await previewReattach(h.db, "ws", "w1");
-    h.stubMux({ runsShellCommand: false });
-    await expect(
-      reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision }),
-    ).rejects.toBeInstanceOf(HostSpawnUnsupportedError);
-    expect(h.calls("job.attach")).toHaveLength(0);
-    const record = (o: {
-      commandSource: string;
-      onPaneCreated?: (id: string, identity?: string) => void;
-    }) => {
-      sources.push(o.commandSource);
-      o.onPaneCreated?.("%92", FAKE_SERVER_IDENTITY);
-      h.panes.set("%92", { command: "" });
-      return Promise.resolve("%92");
-    };
-    h.stubMux({ spawnAgent: record as never });
-    await reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision });
-    expect(sources).toEqual(["explicit"]);
   });
 });
 

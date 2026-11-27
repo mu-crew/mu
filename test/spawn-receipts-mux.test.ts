@@ -1,5 +1,5 @@
-// spawn --task with a non-pi agent on a mux that CAN send (herdr's
-// `agent prompt`): the delivery carries no receipt id. The transport is
+// spawn --task with a non-pi agent on a mux that CAN send (Rex's
+// paste): the delivery carries no receipt id. The transport is
 // substituted (the frozen backend objects cannot be patched); the journal,
 // claim and replay around it are the real ones.
 
@@ -22,9 +22,9 @@ vi.mock("../src/channels/deliver.js", async (orig) => {
       o: { onUndelivered?: (w: unknown) => void },
     ) => {
       hook.texts.push(text);
-      if (hook.mode === "throws") throw new Error("herdr: agent prompt failed");
+      if (hook.mode === "throws") throw new Error("rex: paste failed");
       if (hook.mode === "undelivered") {
-        o.onUndelivered?.({ paneId: "%1", reason: "paste-vanished", message: "never registered" });
+        o.onUndelivered?.({ paneId: "%1", reason: "unconfirmed", message: "never registered" });
       }
       return { transport: "mux" };
     },

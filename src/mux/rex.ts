@@ -556,8 +556,8 @@ export async function panePid(paneId: string): Promise<number | undefined> {
  * the block's own program wrote count: a tool the agent runs (cargo, brew)
  * reports into the same terminal and must not speak for the agent. Of
  * those, a blocked record wins (permission over the rest), else the root
- * record. At rest (idle, done, error) reads as waiting on a human, like
- * herdr's mapping. Undefined when the block is gone or the agent reported
+ * record. At rest (idle, done, error) reads as waiting on a human.
+ * Undefined when the block is gone or the agent reported
  * nothing.
  */
 export async function paneStatus(paneId: string): Promise<MuxPaneStatus | undefined> {
@@ -710,15 +710,13 @@ export async function healthCheck(): Promise<MuxHealth> {
   };
 }
 
-/** True when this process runs in a Rex terminal (and not in a tmux or herdr nested inside it). */
+/** True when this process runs in a Rex terminal (and not in a tmux nested inside it). */
 export function insideRex(): boolean {
   return Boolean(process.env.REX_SESSION) && process.env.TERM_PROGRAM === "rex";
 }
 
 export const rexBackend: MuxBackend = Object.freeze({
   name: "rex" as const,
-  spawnAgentWaitsReady: false,
-  runsShellCommand: true,
   anchorsPanes: false,
   // D15: no lease or plugin views until a reply names the instance that answered it
   // (rex_plugin_views_instance_bound). Setting this true lifts the refusal.

@@ -353,23 +353,6 @@ describe("watchAgentRun", () => {
     });
   });
 
-  it("herdr: a pane its pi left (a bare shell) is a death; an occupied one is not", async () => {
-    for (const [occupied, want] of [
-      [false, null],
-      [true, "unknown"],
-    ] as const) {
-      setMuxForTests({ ...tmuxBackend, paneResult: undefined, paneOccupied: async () => occupied });
-      const ext = await fake({ state: "busy", since: 1, runs: 3 });
-      const w = await watchAgentRun(pia, agentCtlSocket(db, pia), ctl().signal, {});
-      await ext.held();
-      for (const s of servers) s.close();
-      servers = [];
-      (await import("node:fs")).rmSync(agentCtlSocket(db, pia), { force: true });
-      await ext.drop();
-      expect((await w?.settled)?.status, `occupied=${occupied}`).toBe(want);
-    }
-  });
-
   it("aborting the signal cancels the watch: unknown, not a death and not a settle", async () => {
     await fake({ state: "busy", since: 1, runs: 3 });
     const abort = new AbortController();

@@ -24,12 +24,8 @@ import { installMux } from "./_mux.js";
 const db = {} as unknown as Db;
 let calls: string[] = [];
 
-/** A tmux-like backend (has `paneResult`) or a herdr-like one (no `paneResult`, has `paneOccupied`). */
-function install(o: {
-  alive?: boolean | Error;
-  result?: PaneResult | Error;
-  occupied?: boolean | Error;
-}): void {
+/** A tmux-like backend (has `paneResult`) or one without `paneResult`. */
+function install(o: { alive?: boolean | Error; result?: PaneResult | Error }): void {
   calls = [];
   const answer =
     <T>(name: string, v: T | Error) =>
@@ -41,7 +37,6 @@ function install(o: {
   const backend: MuxBackend = { ...tmuxBackend, paneAlive: answer("paneAlive", o.alive ?? true) };
   if (o.result === undefined) delete backend.paneResult;
   else backend.paneResult = answer("paneResult", o.result);
-  if (o.occupied !== undefined) backend.paneOccupied = answer("paneOccupied", o.occupied);
   setMuxForTests(backend);
 }
 
@@ -80,18 +75,15 @@ describe("view reads", () => {
   });
 
   it("viewRunning: paneResult first (an exited pane is not running), never paneAlive", async () => {
-    install({ alive: true, result: exited, occupied: true });
-    expect(await viewRunning("%1", { occupied: true })).toBe(false);
+    install({ alive: true, result: exited });
+    expect(await viewRunning("%1")).toBe(false);
     expect(calls).toEqual(["paneResult"]);
   });
 
-  it("viewRunning without paneResult: paneAlive, or paneOccupied when asked", async () => {
-    install({ alive: true, occupied: false });
+  it("viewRunning without paneResult: paneAlive", async () => {
+    install({ alive: true });
     expect(await viewRunning("%1")).toBe(true);
     expect(calls).toEqual(["paneAlive"]);
-    install({ alive: true, occupied: false });
-    expect(await viewRunning("%1", { occupied: true })).toBe(false);
-    expect(calls).toEqual(["paneOccupied"]);
     install({ alive: new Error("boom") });
     await expect(viewRunning("%1")).rejects.toThrow("boom");
   });
@@ -140,8 +132,8 @@ describe("view reads", () => {
     expect(await sessionViews("mu-b", given)).toEqual([]);
   });
 
-  it("paneUp is viewRunning with occupancy, undefined when the mux cannot say", async () => {
-    install({ alive: true, occupied: false });
+  it("paneUp is viewRunning, undefined when the mux cannot say", async () => {
+    install({ alive: false });
     expect(await paneUp("%1")).toBe(false);
     install({ result: new Error("boom") });
     expect(await paneUp("%1")).toBeUndefined();
@@ -163,20 +155,20 @@ describe("job kinds", () => {
     const pane = { kind: "pane", viewPaneId: "%1" } as const;
     install({ result: { state: "running" } });
     expect(await jobLiveness(db, pane)).toEqual({ state: "running" });
-    install({ alive: true, occupied: false });
+    install({ alive: false });
     expect(await jobLiveness(db, pane)).toEqual({ state: "lost", reason: "pane gone" });
     install({ result: new Error("boom") });
     expect((await jobLiveness(db, pane)).state).toBe("unknown");
   });
 
-  it("lease: the carrier pane runs (viewRunning, no occupancy)", async () => {
+  it("lease: the carrier pane runs (viewRunning)", async () => {
     const lease = { kind: "lease", viewPaneId: "%1" } as const;
     install({ result: exited });
     expect(await jobLiveness(db, lease)).toEqual({
       state: "lost",
       reason: "carrier pane not running",
     });
-    install({ alive: true, occupied: false });
+    install({ alive: true });
     expect(await jobRunning(db, lease)).toBe(true);
     expect(calls).toEqual(["paneAlive"]);
     install({ result: new Error("boom") });

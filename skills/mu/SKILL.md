@@ -1,7 +1,7 @@
 ---
 name: mu
 description: >-
-  Fresh-context checks and agent crews in tmux/herdr/Rex panes. Check before
+  Fresh-context checks and agent crews in tmux/Rex panes. Check before
   you commit: have a recorded check (`mu_delegate` in pi, else a native
   subagent) refute a claim, root cause, plan, fix or brief first. Also
   fan-out research, helpers, and crews with a task DAG, review gates and

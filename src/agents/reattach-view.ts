@@ -15,7 +15,7 @@ import { expectsCtl } from "../channels/select.js";
 import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { proveViewGone } from "../host-policy.js";
-import { HostHandbackError, HostSpawnUnsupportedError } from "../hosts.js";
+import { HostHandbackError } from "../hosts.js";
 import { jobLiveness, outlivesView } from "../jobs/kinds.js";
 import {
   birthIdentity,
@@ -76,9 +76,6 @@ export function viewJob(db: Db, ws: string, name: string): ViewJob | undefined {
 
 async function detachedViewMux(host: string) {
   const mux = await activeMux();
-  if (!mux.runsShellCommand) {
-    throw new HostSpawnUnsupportedError(host, mux.name, "detached job view command");
-  }
   refuseCarrierViewMux(mux, host, "a reattach");
   return mux;
 }
@@ -243,7 +240,6 @@ export async function reattachView(
         // A kind with its own channel: stdin /dev/null. On a built-in channel the view stays
         // interactive, as at spawn (`hooks` pastes into it, `mux` types).
         command: viewLine(view.command, d.kind.caps.channel === undefined),
-        commandSource: "explicit",
         ...(view.cwd !== undefined ? { cwd: view.cwd } : {}),
         env: view.env,
         onPaneCreated: (id, identity) => {

@@ -1,6 +1,6 @@
 // Arming on the mux transport (v_wait_arming): a delivered paste to a non-pi pane is owed a
 // wait with no run fence; an undelivered one, and a delivery-UNKNOWN task spawn, owe no run.
-// The transport is mocked (the herdr/tmux paste itself is not under test).
+// The transport is mocked (the Rex/tmux paste itself is not under test).
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

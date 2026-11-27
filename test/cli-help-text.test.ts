@@ -39,14 +39,14 @@ const TIMEOUT_CLAIMS = [
 
 describe("help text matches the code", () => {
   it("mu --help names every multiplexer", () => {
-    expect(buildProgram().description()).toContain("tmux, herdr or Rex panes");
+    expect(buildProgram().description()).toContain("tmux or Rex panes");
   });
 
   it("send --steer is pi only, refused by hooks, a plain send on mux", () => {
     const steer = optionHelp(["agent", "send"], "--steer");
     expect(steer).toMatch(/^pi \(control socket\) only/);
     expect(steer).toContain("A hook harness refuses it");
-    expect(steer).toContain("another CLI in a herdr or Rex pane gets a plain send");
+    expect(steer).toContain("another CLI in a Rex pane gets a plain send");
   });
 
   it.each([[["agent", "send"]], [["agent", "abort"]]])(

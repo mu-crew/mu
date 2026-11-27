@@ -768,7 +768,7 @@ export async function cmdList(
     console.log("");
     console.log(pc.yellow(`Orphan panes (${view.orphans.length})`));
     console.log(pc.dim("  Panes that look like agents but aren't in the registry."));
-    console.log(pc.dim("  Kill one with tmux/herdr or ignore it."));
+    console.log(pc.dim("  Kill one with tmux or Rex, or ignore it."));
     for (const orphan of view.orphans) {
       console.log(`  ${pc.dim(orphan.paneId)} cli=${orphan.command}`);
     }
@@ -1197,7 +1197,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--host <profile>",
-      "run on this host profile (mu host add): the pane runs its --shell template, which starts the remote pi and forwards its control socket here; --cwd and --worktree name REMOTE paths (the worktree is made by its --exec, under ~/.local/state/mu-next/remote-worktrees/<ws>/<name>); --root names the remote repo; the pane dying is the agent dying. tmux and Rex; herdr refuses",
+      "run on this host profile (mu host add): the pane runs its --shell template, which starts the remote pi and forwards its control socket here; --cwd and --worktree name REMOTE paths (the worktree is made by its --exec, under ~/.local/state/mu-next/remote-worktrees/<ws>/<name>); --root names the remote repo; the pane dying is the agent dying",
     )
     .option(
       "--mule <profile>",
@@ -1255,11 +1255,11 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("send <name> <text>")
     .description(
-      "Send text: pi over its control socket, a hook harness on tmux by paste (confirmed by run count), other CLIs on herdr or Rex. --fresh = new session + send. Text `-` reads stdin: mu agent send <name> - <<'EOF'.",
+      "Send text: pi over its control socket, a hook harness on tmux by paste (confirmed by run count), other CLIs on Rex. --fresh = new session + send. Text `-` reads stdin: mu agent send <name> - <<'EOF'.",
     )
     .option(
       "--steer",
-      "pi (control socket) only: if busy, deliver after the current tool calls finish, before the next model call (default: after the run ends); does not stop a running tool: use --interrupt. A hook harness refuses it; another CLI in a herdr or Rex pane gets a plain send",
+      "pi (control socket) only: if busy, deliver after the current tool calls finish, before the next model call (default: after the run ends); does not stop a running tool: use --interrupt. A hook harness refuses it; another CLI in a Rex pane gets a plain send",
     )
     .option(
       "--interrupt",

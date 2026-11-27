@@ -6,17 +6,16 @@ import type { JobKind, JobLiveness, JobRef } from "./types.js";
 import { viewRunning } from "./view.js";
 
 /**
- * Whether the pane still holds a running agent: tmux and Rex, the pane runs
- * (an exited retained pane does not); herdr, an agent still occupies it (the
- * pane outlives its occupant as a shell). `undefined` when the multiplexer
- * cannot say: unknown, never a death.
+ * Whether the pane still holds a running agent: the pane runs (an exited
+ * retained pane does not). `undefined` when the multiplexer cannot say:
+ * unknown, never a death.
  */
 export async function paneUp(
   paneId: string,
   identity?: string | null,
 ): Promise<boolean | undefined> {
   try {
-    return await viewRunning(paneId, { occupied: true, identity });
+    return await viewRunning(paneId, { identity });
   } catch {
     return undefined;
   }

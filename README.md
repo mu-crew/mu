@@ -58,13 +58,12 @@ and what the `hooks` channel lacks against pi.
 You need:
 
 - Node 22.12–26 (see `.nvmrc`).
-- tmux ≥ 3.0, [herdr](https://github.com/herdrdev/herdr) or
-  [Rex](https://www.superlogical.com/rex) for agents
+- tmux ≥ 3.0 or [Rex](https://www.superlogical.com/rex) for agents
   ([choosing one](docs/guide/backends.md)). `mu doctor` reports which one
   is active. Without any, task verbs
   and pi's `mu_delegate` still work (a delegate runs as a child pi).
 - One or more of pi, Claude Code, Codex, cursor-agent and Muse Code (any
-  other agent CLI works on herdr and Rex, with less).
+  other agent CLI works on Rex, with less).
 - git on `PATH` for `--worktree`.
 
 [murmur](https://github.com/mu-crew/murmur) is optional for pi agents.
@@ -72,7 +71,7 @@ On **vtmux >= 3.8-rc3** with `set -s vtmux-program-status on` and
 `set -s vtmux-program-resume on`, mu reads each pane's own OSC 7501 report
 natively (`paneStatus()`): Claude Code and Codex send one, pi too, and
 Cursor is bridged by a small hook. No murmur hooks are needed. On Rex it is the
-same report. On herdr, herdr reports state.
+same report.
 
 **Vanilla tmux 3.8** drops OSC 7501 and OSC 7577. pi workers still work fully
 through pi's `ctl` socket (only the `mu/delegates` window-tab glyph is absent).
@@ -86,7 +85,7 @@ Updating, upgrading from 4.x or 3.x, and running from a checkout:
 
 ## Quick start
 
-Run this inside tmux, herdr or Rex, in a git repository:
+Run this inside tmux or Rex, in a git repository:
 
 ```bash
 mu workstream init auth                             # every verb below names it with -w

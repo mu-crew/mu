@@ -46,7 +46,6 @@ A **remote command** is not a placement, because no agent runs:
 | The host runs the harness and the link is stable, and losing the run on a drop is acceptable | **remote loop** over a session. A session is attached to its ssh tty. |
 | No suitable machine | **remote loop** on a [provisioned host](remote.md#provider-hosts) |
 | One build or test on a host, no agent | [**remote command**](#remote-command-mu-host-exec) |
-| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex also runs a remote workspace and session templates) |
 
 A provisioned host or your own: weigh capacity (on demand or fixed),
 lifetime ([deadline or idle reclaim](remote.md#provider-hosts)), credentials,
@@ -59,11 +58,11 @@ Support depends on placement and transport.
 
 | Placement | Transport | Harnesses | Multiplexer (your pane) |
 | --- | --- | --- | --- |
-| local | none | all five | tmux, Rex, herdr |
-| remote workspace | mule | pi only (today) | tmux, Rex; herdr refused |
-| remote loop | session | pi; the other four on tmux via remote hook events, on Rex polled (no hook receipt or hook-based close) | tmux, Rex; herdr refused |
+| local | none | all five | tmux, Rex |
+| remote workspace | mule | pi only (today) | tmux, Rex |
+| remote loop | session | pi; the other four on tmux via remote hook events, on Rex polled (no hook receipt or hook-based close) | tmux, Rex |
 | remote loop | lease (a lease template or mule's plugin lease) | pi only: a lease carrier forwards no stdin | tmux |
-| remote loop | other plugin job (on your host or a provisioned one) | what the plugin and host offer | tmux; Rex and herdr refused |
+| remote loop | other plugin job (on your host or a provisioned one) | what the plugin and host offer | tmux; Rex refused |
 | remote command | the host's link | none: no agent | any (no pane) |
 
 On an sshd with `MaxSessions 1`, mu's SSH session starter opens its own
@@ -73,8 +72,8 @@ needs a free session on it. mule runs every op over the one master you opened.
 Channels:
 
 - **local:** pi on `ctl`. On tmux the hook harnesses (claude, codex,
-  cursor-agent, muse) are on `hooks` and other CLIs on `mux`; on Rex and
-  herdr every non-pi worker is on `mux`.
+  cursor-agent, muse) are on `hooks` and other CLIs on `mux`; on Rex
+  every non-pi worker is on `mux`.
 - **remote workspace:** pi on a local `ctl`.
 - **session:** pi on a forwarded `ctl`; on tmux the hook harnesses are on
   remote `hooks`, on Rex they are on `mux`.
@@ -82,7 +81,7 @@ Channels:
 - **plugin job:** the plugin's own channel if it declares one, else the
   built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must
   declare one).
-- **a command gate** on a host: `mux` on tmux or Rex, herdr refused; its
+- **a command gate** on a host: `mux` on tmux or Rex; its
   connections are a session's, and lease profiles run no gates.
 
 Limits:
@@ -101,7 +100,7 @@ mu host exec dev --cwd /path/to/repo --json --timeout 60 -- git rev-parse HEAD
 ```
 
 One synchronous command through the host's link: no agent row, task, pane or
-job. It runs on every backend, herdr included.
+job. It runs on every backend.
 
 - `--cwd` sets the working directory on the host, including with a template
   that has no `{cwd}` placeholder. Without it, the link uses `.`.
@@ -158,9 +157,6 @@ can race. A Rex terminal may drive a tmux workstream (`MU_MUX=tmux`).
 
 Backend refusals happen before spawn effects.
 
-- **herdr for a remote workspace or a remote loop:** it cannot run the
-  required per-agent command or view. Use tmux (or Rex for a remote
-  workspace or a session template). Local workers and remote commands run.
 - **Rex on lease and plugin job views** (including the ssh example plugin's
   pane): tmux-only: a Rex reply does not name the server instance that
   answered it, so mu cannot prove which server holds a view ([roadmap](../ROADMAP.md)).

@@ -40,7 +40,7 @@ export type AttachPlan =
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** Inside a client of the mux? `$TMUX` set (herdr decides itself). Whether that client is on
+/** Inside a client of the mux? `$TMUX` set. Whether that client is on
  *  mu's own server is the backend's call (`tmux.ts` `attachCommands`: switch or nest). */
 export const insideClient = (): boolean => Boolean(process.env.TMUX);
 

@@ -33,7 +33,7 @@ import { LOCAL_LOOP_TRANSPORT } from "../src/hosts.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { helloReply, INC, withHello } from "./_ctl-ext.js";
-import { installMux, type MuxHarness } from "./_mux.js";
+import { installMux, type MuxHarness, REX_PANE, rexSendExecutor } from "./_mux.js";
 import { runCli, runCliJson, runCliWire } from "./_runCli.js";
 
 let dir: string;
@@ -486,21 +486,22 @@ describe("sendViaTransport", () => {
     );
     expect(err).toBeInstanceOf(AgentSendUnsupportedError);
     expect((err as Error).message).toBe(
-      "agent worker-1 runs claude, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr), start it with the prompt as an argument (--command \"claude '<prompt>'\"), or use pi",
+      "agent worker-1 runs claude, not pi: tmux has no reliable send for it; spawn it on Rex (MU_MUX=rex), start it with the prompt as an argument (--command \"claude '<prompt>'\"), or use pi",
     );
     expect(pasted()).toBe(false);
     expect(mux.calls.some((c) => c[0] === "send-keys" || c[0] === "set-buffer")).toBe(false);
   });
 
-  it("send to a non-pi agent on herdr goes through the atomic agent prompt", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "w1:p1", cli: "claude" });
-    const herdr = installMux("herdr", [["agent prompt", "{}"]]);
+  it("send to a non-pi agent on Rex goes through its paste", async () => {
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: REX_PANE, cli: "claude" });
+    const sent: string[] = [];
+    const rex = installMux("rex", rexSendExecutor(sent));
     try {
       const res = await sendToAgent(db, "worker-1", "hi", { workstream: "auth" });
       expect(res).toEqual({ transport: "mux" });
-      expect(herdr.calls.some((c) => c[0] === "agent" && c[1] === "prompt")).toBe(true);
+      expect(sent).toEqual(["hi"]);
     } finally {
-      herdr.restore();
+      rex.restore();
     }
   });
 });

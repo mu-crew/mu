@@ -83,7 +83,7 @@ const hostile = (other: string): Record<string, string> => ({
   MU_DB_PATH: join(other, "mu.db"),
   MU_STATE_DIR: join(other, "state"),
   MU_TMUX_SOCKET: "default",
-  MU_MUX: "herdr",
+  MU_MUX: "rex",
   MURMUR_STATE_DIR: join(other, "murmur2"),
   TMUX_TMPDIR: "/tmp",
   PI_CODING_AGENT_DIR: join(other, "pi"),

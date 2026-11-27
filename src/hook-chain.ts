@@ -23,8 +23,7 @@
 // - The walk ends at the tmux server (the pid `$TMUX` names, else the first
 //   ancestor whose argv is tmux's) or at init.
 //
-// The env is only a fallback (spec D7), for a pane mu could not anchor (herdr,
-// Rex) or an unreadable process table: `MU_MANAGED_AGENT`, `MU_AGENT_NAME`,
+// The env is only a fallback (spec D7), for a pane mu could not anchor (Rex) or an unreadable process table: `MU_MANAGED_AGENT`, `MU_AGENT_NAME`,
 // `MU_WORKSTREAM` and an `MU_AGENT_CLI` naming the hook's harness. A nested
 // agent inherits all of these but runs a different harness than its parent's
 // `MU_AGENT_CLI`, or shows up as a second harness in the chain.

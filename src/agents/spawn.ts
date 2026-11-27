@@ -272,7 +272,7 @@ export interface SpawnAgentOptions {
   workstream: string;
   /** Defaults to "pi". Any CLI is accepted: pi is driven over its control
    *  socket; others run `MU_<CLI>_COMMAND` (or the cli name) and get
-   *  text by herdr `agent prompt` (a send to them on tmux is refused). */
+   *  text by Rex's paste, or by paste on tmux's `hooks` channel for a hook harness. */
   cli?: string;
   /** The actual command to run in the pane. Defaults to the cli value. */
   command?: string;
@@ -303,8 +303,7 @@ export interface SpawnAgentOptions {
    *  `shell` template, which starts the remote pi and forwards its ctl socket
    *  here; `cwd` and `worktree` name REMOTE paths (the worktree is made by the
    *  profile's `exec`). One channel is held from before the first remote
-   *  command until the pane dies. Refused on a mux that cannot run a shell
-   *  command (herdr). With `host`, `root` is a REMOTE repo (default the
+   *  command until the pane dies. With `host`, `root` is a REMOTE repo (default the
    *  profile's `repo`); a `worktree` needs one of them. */
   host?: string;
   /** Run local pi with a managed remote worktree on this static mule profile. Implies worktree. */
@@ -437,9 +436,7 @@ export function piHooksRequested(env: NodeJS.ProcessEnv = process.env): boolean 
  *      cwd and base (worktree path), or insert a fresh agent row.
  *   5. Liveness: awaitSpawnLiveness() (fixed sleep, then pane + scan
  *      check), or for a tmux pi agent the ctl handshake with a pane
- *      check per tick and the scan at the end. A backend with
- *      `spawnAgentWaitsReady` (herdr) is ready when spawnAgent settles.
- *   6. ctl handshake for herdr pi agents (outside the rollback).
+ *      check per tick and the scan at the end.
  *
  * Failure between any of (3)–(5) calls rollbackSpawn() to undo the
  * pane + row + worktree. The caller-visible error is preserved.
@@ -537,9 +534,7 @@ async function spawnPreparedAgent(
   }
   if (profile) assertLeaseSpawnable(profile, gateToken !== undefined);
   const command = opts.command ?? (profile ? cli : resolved.command);
-  // Where `command` came from. Backends that resolve the executable
-  // themselves may not silently ignore an operator's choice, and need to
-  // know WHICH knob to name (see `SpawnAgentPaneOptions.commandSource`).
+  // Where `command` came from, recorded on the row (a reload names the same knob).
   const commandSource =
     opts.command !== undefined
       ? "explicit"
@@ -590,7 +585,7 @@ async function spawnPreparedAgent(
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
   let phase: SpawnPhase = "worktree";
   let trustDialog = false;
-  // Settles when the backend considers the agent started (see spawnAgentWaitsReady).
+  // Settles when the backend has started the agent in its pane.
   let readiness: Promise<unknown> = Promise.resolve();
   let staged: StagedWorktree | undefined;
   let lease: HostLease | undefined;
@@ -711,10 +706,9 @@ async function spawnPreparedAgent(
 
     // A local hook harness on tmux starts through the anchor wrapper
     // (src/anchors.ts), so its hooks find the agent without mu's env (spec D3).
-    // pi keeps its plain command: its extensions read the env in-process. Other
-    // backends keep it too: herdr starts the agent kind itself, and murmur's
-    // hooks have no tmux server to place a Rex pane's event through (Rex keeps
-    // its `$SHELL -ic` launch).
+    // pi keeps its plain command: its extensions read the env in-process. Rex
+    // keeps it too: murmur's hooks have no tmux server to place a Rex pane's
+    // event through (Rex keeps its `$SHELL -ic` launch).
     const anchored = (cmd: string, anchorsPanes: boolean): string => {
       if (!anchorsPanes || harness === undefined || harness === "pi") return cmd;
       pruneAnchors();
@@ -771,9 +765,7 @@ async function spawnPreparedAgent(
     //
     // The lock covers the pane's CREATION, not its readiness: spawnAgent
     // calls `onPaneCreated` the moment the pane exists, the row is
-    // finalized, and the lock is released while the backend is still
-    // waiting for the agent (herdr: up to 30s, past the lock's own
-    // 15s acquire / 30s stale budget). The liveness wait below is
+    // finalized, and the lock is released before the spawn settles. The liveness wait below is
     // equally outside the lock: holding it would serialise the very
     // parallelism the operator asked for.
     //
@@ -832,7 +824,7 @@ async function spawnPreparedAgent(
         // The pi fallback (spec D15): a local pi on tmux, asked for with MU_PI_CHANNEL=hooks,
         // is on `hooks`. Its pane gets the variable too, so murmur's pi extension writes
         // inbox events and never opens its store. mu's extension still serves ctl (the
-        // handshake below, delegates, doctor). A remote pi, a pi on herdr or Rex, and a
+        // handshake below, delegates, doctor). A remote pi, a pi on Rex, and a
         // gate stay as they were: murmur's walk places events only under a tmux server.
         const piHooks =
           !profile &&
@@ -909,7 +901,6 @@ async function spawnPreparedAgent(
           name: opts.name,
           cli,
           command: paneCommand,
-          commandSource,
           ...(profile ? {} : { cwd: paneCwd }),
           paneOptions: {
             "@mu_agent": opts.name,
@@ -1005,14 +996,9 @@ async function spawnPreparedAgent(
     // immediately (lock conflict, bad credentials, etc.). On failure,
     // surface a typed error with whatever scrollback the mux still has.
     //
-    // A backend with `spawnAgentWaitsReady` (herdr) starts the agent
-    // inside spawnAgent and returns only once the MUX has detected it and
-    // considers it ready for input — strictly stronger than what the
-    // scrollback poll can prove, so MU_SPAWN_LIVENESS_MS is subsumed and
-    // deliberately not consulted. Both branches live outside the spawn
-    // lock on purpose — they are the slow part (1.5s+ here, up to 30s
-    // there). Either throwing routes through the same `rollbackSpawn`,
-    // so a pane that never became an agent never keeps its agent row.
+    // It lives outside the spawn lock on purpose: it is the slow part
+    // (1.5s+). Throwing routes through `rollbackSpawn`, so a pane that
+    // never became an agent never keeps its agent row.
     //
     // A tmux pi agent skips the fixed sleep: the ctl handshake is the
     // readiness signal, so the pane check rides on each handshake tick
@@ -1020,9 +1006,7 @@ async function spawnPreparedAgent(
     // handshake timeout with a live, clean pane is still NOT a
     // rollback (see below). MU_SPAWN_LIVENESS_MS=0 disables the checks
     // here too.
-    if ((await activeMux()).spawnAgentWaitsReady) {
-      await readiness;
-    } else if (wantsCtl) {
+    if (wantsCtl) {
       // A workspace-only worker has no fallback: it must have a working local ctl.
       if (muleProfile !== undefined) await readiness;
       const pid = paneId;
@@ -1103,7 +1087,6 @@ async function spawnPreparedAgent(
     opts.signal?.throwIfAborted();
     // A gate is not scanned for startup errors or liveness: a command that ends at
     // once is a result (the retained pane), and a dead transport reads as exit-less.
-    // Backends that wait for pane readiness still need a separate ctl handshake.
     // A normal timeout is reported without rolling back an ordinary worker.
     if (ctl === undefined) {
       if (wantsCtl) {

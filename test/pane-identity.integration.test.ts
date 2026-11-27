@@ -50,7 +50,6 @@ describeIfTmux("pane identity across a tmux server restart (real tmux, private s
       name,
       cli: "pi",
       command: SLEEP,
-      commandSource: "cli-key",
       env: {},
     });
 
@@ -149,7 +148,6 @@ describeIfTmux("pane identity across a tmux server restart (real tmux, private s
       name: "old",
       cli: "pi",
       command: "sh -c 'echo LEGACY-PANE; exec cat'",
-      commandSource: "cli-key",
       env: {},
     });
     insertAgent(db, { name: "old", workstream: ws, paneId: pane }); // no identity

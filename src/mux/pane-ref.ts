@@ -18,7 +18,7 @@ export interface VerifiedPaneRef {
 
 export type PaneRef = VerifiedPaneRef | { readonly kind: "unverified"; readonly paneId: string };
 
-/** Herdr and Rex use opaque native handles; only tmux needs a server fence. */
+/** Rex uses opaque native handles; only tmux needs a server fence. */
 export type ActionPaneRef = PaneRef | { readonly kind: "native"; readonly paneId: string };
 
 /** Construct from a tmux birth reply or the identity recorded with the pane, never a new lookup. */

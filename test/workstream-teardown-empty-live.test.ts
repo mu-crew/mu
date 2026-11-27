@@ -106,26 +106,6 @@ describe("teardown --empty: live-pane guard and group hint", () => {
     expect(Object.keys(sessions).sort()).toEqual(["mu-busy-shell", "mu-litter", "mu-livecrew"]);
   });
 
-  it("keeps an unregistered herdr workspace", async () => {
-    const workspaces = JSON.stringify({
-      result: {
-        type: "workspace_list",
-        workspaces: [{ label: "mu-livecrew", workspace_id: "w1", tab_count: 1, pane_count: 1 }],
-      },
-    });
-    const panes = JSON.stringify({
-      result: {
-        type: "pane_list",
-        panes: [{ pane_id: "w1:p1", tab_id: "w1:t1", workspace_id: "w1" }],
-      },
-    });
-    mux = installMux("herdr", [
-      ["workspace list", workspaces],
-      ["pane list", panes],
-    ]);
-    expect(await listEmptyWorkstreams(db)).toEqual([]);
-  });
-
   it("still sweeps a registered-empty workstream regardless of panes", async () => {
     ensureWorkstream(db, "bare");
     mux = installMux("tmux", tmuxFake({ "mu-bare": ["pi"] }, []));

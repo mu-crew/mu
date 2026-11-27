@@ -429,7 +429,6 @@ describe("rex send, capture, attach", () => {
 
   it("is a full backend record", () => {
     expect(rexBackend.name).toBe("rex");
-    expect(rexBackend.runsShellCommand).toBe(true);
     expect(rexBackend.paneStatus).toBeDefined();
     expect(rexBackend.sendToPane).toBeDefined();
   });

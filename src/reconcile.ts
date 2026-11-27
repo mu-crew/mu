@@ -66,7 +66,7 @@ export interface ReconcileReport {
   /** Panes in the workstream's tmux session that look like agents but
    *  aren't in the registry. Never auto-registered. */
   orphans: MuxPane[];
-  /** Rows whose pane id belongs to another managed backend (tmux, herdr, Rex).
+  /** Rows whose pane id belongs to another backend (tmux, Rex, or the retired herdr).
    *  Kept, never pruned: the active backend cannot see them. */
   foreign: agentSdk.AgentRow[];
   /** Which mode this report was generated in. Lets callers switch their

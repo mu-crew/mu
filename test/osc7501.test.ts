@@ -129,7 +129,6 @@ describe("spawn tagging", () => {
       name: "w1",
       cli: "pi",
       command: "pi",
-      commandSource: "cli-key",
       env: { MU_AGENT_NAME: "w1" },
       paneOptions: { "@mu_agent": "w1", "@mu_workstream": "ws", "@mu_role": "worker" },
     });
@@ -161,7 +160,6 @@ describe("spawn tagging", () => {
       name: "w1",
       cli: "pi",
       command: "pi",
-      commandSource: "cli-key",
       env: {},
       paneOptions: { "@mu_agent": "w1" },
     });
@@ -185,7 +183,6 @@ describe("spawn tag atomicity", () => {
       name: "w1",
       cli: "pi",
       command: "pi",
-      commandSource: "cli-key",
       env: {},
       paneOptions: { "@mu_agent": "w1", "@mu_workstream": "ws", "@mu_role": "worker" },
     });

@@ -30,7 +30,7 @@ function start(args: string[], extra: NodeJS.ProcessEnv = {}) {
     if (k.startsWith("MU_") || k === "PI_SESSION_ID" || k === "TMUX" || k === "TMUX_PANE")
       delete e[k];
   }
-  // PATH holds no tmux or herdr: a registry-row worker has no pane to read, so its state stays
+  // PATH holds no tmux or Rex: a registry-row worker has no pane to read, so its state stays
   // unknown (never dead) and the wait runs until the signal.
   const child = spawn(process.execPath, [CLI, ...args], {
     env: { ...e, PATH: dir, MU_DB_PATH: dbPath, MU_STATE_DIR: dir, MU_SYNC_DIR: "", ...extra },

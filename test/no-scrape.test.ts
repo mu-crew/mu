@@ -22,7 +22,6 @@ describe("pane text is not used for agent state", () => {
       ["agents/spawn.ts", "detect startup errors and include failure context"],
       ["agents.ts", "return agent output from the SDK read operation"],
       ["cli/agents.ts", "print agent scrollback for read and show"],
-      ["mux/herdr.ts", "implement the mux capture operation"],
       ["mux/tmux.ts", "implement the mux capture operation"],
       ["mux/types.ts", "declare the mux capture operation"],
     ]);

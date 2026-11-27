@@ -152,7 +152,7 @@ export async function viewCapture(
 
 /**
  * The identity a pane's birth must report: the backend gave one (tmux: from the same call that
- * created the pane), or it has none to give (herdr, Rex: undefined). A backend that has an identity
+ * created the pane), or it has none to give (Rex: undefined). A backend that has an identity
  * and gave none is a spawn failure, never a row without one: that row would read as a pre-upgrade
  * (unverified) row and adopt a recycled pane.
  */
@@ -177,7 +177,7 @@ export async function viewIdentity(mux?: MuxBackend): Promise<string | undefined
 /**
  * What a dispatcher view's birth is compared against (`birthServer`), read before the mux is
  * asked: Rex's server instance answering now. tmux needs none (its creation call reports its
- * server) and herdr has none to give: undefined. Never throws: no answer is an unknown birth.
+ * server): undefined. Never throws: no answer is an unknown birth.
  */
 export async function serverBeforeBirth(mux: MuxBackend): Promise<string | undefined> {
   if (mux.name === "tmux" || mux.paneOnServer === undefined) return undefined;
@@ -189,7 +189,7 @@ export async function serverBeforeBirth(mux: MuxBackend): Promise<string | undef
  * backend's name and the server's own identity after a `:`, never a backend name alone.
  * tmux: `born`, the identity the creation call itself reported (`onPaneCreated`). Rex: its
  * server instance, the same before (`serverBeforeBirth`) and after the birth. A backend with no
- * server identity (herdr), a birth that reported none, or a server that changed is null: the
+ * server identity, a birth that reported none, or a server that changed is null: the
  * view is unknown and its record retains, never inferred.
  */
 export async function birthServer(
@@ -219,7 +219,7 @@ export async function viewOnServer(
   mux?: MuxBackend,
 ): Promise<ViewOnServer> {
   const m = mux ?? (await activeMux());
-  const [, backend, identity] = /^(tmux|rex|herdr):(.+)$/.exec(server) ?? [];
+  const [, backend, identity] = /^(tmux|rex):(.+)$/.exec(server) ?? [];
   if (backend === undefined || identity === undefined) return "elsewhere";
   if (backend === m.name && m.paneOnServer !== undefined) {
     const seen = await m.paneOnServer(paneId, identity);
@@ -249,7 +249,7 @@ export async function sessionViews(session: string, mux?: MuxBackend): Promise<M
   return (mux ?? (await activeMux())).listPanes(session);
 }
 
-/** Whether the backend classifies its panes itself (herdr's classifier, Rex's OSC 7501 report). */
+/** Whether the backend classifies its panes itself (Rex's OSC 7501 report). */
 export function viewsReportStatus(mux: MuxBackend): boolean {
   // tmux has paneStatus for vtmux only: plain tmux still reads murmur, so it never takes this path.
   return mux.paneStatus !== undefined && mux.name !== "tmux";
@@ -368,20 +368,16 @@ export async function viewState(
 /**
  * Whether the view's command still runs. tmux and Rex: `paneResult` is
  * running (a retained pane whose command ended is not). A backend without it:
- * with `occupied`, an agent still occupies the pane (herdr's pane outlives its
- * occupant as a shell); else the pane exists. Throws when the probe fails:
- * unknown keeps whatever the caller guards (a host channel, a row).
+ * the pane exists. Throws when the probe fails: unknown keeps whatever the
+ * caller guards (a host channel, a row).
  */
 export async function viewRunning(
   paneId: string,
-  opts: { occupied?: boolean; identity?: string | null } = {},
+  opts: { identity?: string | null } = {},
 ): Promise<boolean> {
   const mux = await activeMux();
   if (mux.paneResult !== undefined) {
     return (await mux.paneResult(probeRef(mux, paneId, opts.identity))).state === "running";
-  }
-  if (opts.occupied === true && mux.paneOccupied !== undefined) {
-    return await mux.paneOccupied(paneId);
   }
   return await mux.paneAlive(probeRef(mux, paneId, opts.identity));
 }

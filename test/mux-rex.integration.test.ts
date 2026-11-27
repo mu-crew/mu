@@ -75,7 +75,6 @@ describeIfRex("rex integration (private Rex server)", () => {
       name: window,
       cli: "sh",
       command,
-      commandSource: "explicit",
       cwd: server.dir,
       env: { MU_AGENT_NAME: window },
       ...extra,

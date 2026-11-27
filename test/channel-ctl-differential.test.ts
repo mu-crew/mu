@@ -1,7 +1,7 @@
 // The P4 differential (review of P4, ruling 2): a ctl agent's state reading,
 // the probes it makes, and CLOSE eligibility, frozen as they were at
 // b577dfd8, before the channel registry. 72 ctl cases: backend (tmux,
-// herdr, Rex) × job kind (pane, lease) × socket (answers, missing, refuses)
+// Rex) × job kind (pane, lease) × socket (answers, missing, refuses)
 // × pane (running, ended, absent, cannot tell); each read with and without
 // the job listed, plus the job kind's own liveness. Then 12 CLOSE cases: cli
 // (pi, another key, claude) × recorded channel (ctl, hooks, mux, none).
@@ -58,7 +58,6 @@ it("ctl readings, their probes and CLOSE eligibility are exactly b577dfd8's", as
     setMurmurRunnerForTests(async () => null);
     for (const [backend, paneId] of [
       ["tmux", "%1"],
-      ["herdr", "w1:p1"],
       ["rex", "block:12345678-1234-1234-1234-123456789abc"],
     ] as const)
       for (const kind of ["pane", "lease"] as const)
@@ -178,6 +177,6 @@ it("ctl readings, their probes and CLOSE eligibility are exactly b577dfd8's", as
   const got: unknown = JSON.parse(JSON.stringify(out));
   const write = process.env.P4_DIFF_WRITE;
   if (write !== undefined && write !== "") writeFileSync(write, JSON.stringify(got, null, 2));
-  expect(out).toHaveLength(84);
+  expect(out).toHaveLength(60);
   expect(got).toEqual(JSON.parse(readFileSync(FIXTURE, "utf8")));
 });

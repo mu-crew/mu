@@ -553,8 +553,6 @@ export class AgentExtensionOutdatedError extends Error {
     public readonly ops?: readonly string[],
     /** The recovery inputs only the caller can compute (the mux and the agent row). */
     public readonly recovery: {
-      /** A shell line that types /reload into the pane through the mux (herdr). */
-      muxReload?: string;
       /** The agent's original spawn command, rebuilt from its row. */
       respawn?: string;
       /** `op` is a feature of the hello reply, not an op. */
@@ -726,7 +724,7 @@ export class AgentNotBlockedError extends Error {
 
 /**
  * `mu agent answer` on a channel that cannot type keys into the pane (`ctl`:
- * pi's dialogs are answered in the pane; `mux` on herdr or Rex). Exit 2.
+ * pi's dialogs are answered in the pane; `mux` on Rex). Exit 2.
  */
 export class AgentAnswerUnsupportedError extends Error {
   override readonly name = "AgentAnswerUnsupportedError";

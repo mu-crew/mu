@@ -22,7 +22,7 @@ Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
 │  ops log (capture, apply, sync, drift)                          │
 └───────────────┬──────────────────┬──────────────────┬───────────┘
                 ▼                  ▼                  ▼
-   SQLite (~/.local/state/mu5/mu.db) · tmux/herdr/Rex panes · git worktrees
+   SQLite (~/.local/state/mu5/mu.db) · tmux/Rex panes · git worktrees
           pi agents: control socket · hook harnesses: murmur's inbox
 ```
 
@@ -45,14 +45,15 @@ claim keyed on `$MU_AGENT_NAME` coordinate the crew:
 [architecture/dag.md](architecture/dag.md).
 
 **Multiplexer and reconciliation.** One workstream is one mux session
-(a tmux session, a herdr workspace or a Rex session). Call sites reach the backend
+(a tmux session or a Rex session). Call sites reach the backend
 only through `activeMux()` and branch on capabilities, never on the
 backend name. Spawn checks the backend named by registered pane ids before
 staging, reserving or dispatching. `mu agent list` prunes ghost rows and
-surfaces orphan panes, but keeps rows from other backends; `mu state`
+surfaces orphan panes, but keeps rows from other backends (the retired
+herdr's `w1:p1` rows included); `mu state`
 reports those panes as unknown. Runtime agent state is read on demand, never
-stored: the control socket for pi agents on `ctl`, herdr's native status on
-herdr, the program's OSC 7501 report on Rex, and murmur for other CLIs on tmux
+stored: the control socket for pi agents on `ctl`, the program's OSC 7501
+report on Rex and vtmux, and murmur for other CLIs on tmux
 and a pi on the `hooks` fallback:
 [architecture/mux.md](architecture/mux.md).
 
@@ -72,7 +73,7 @@ pasting. Remote pi agents (`spawn --host`) use a socket forward from
 the host profile's shell template or a carrier. A pi is pasted to only
 when it was spawned on the `hooks` fallback (`MU_PI_CHANNEL=hooks`,
 recorded on its row), never because its socket failed. Non-pi agents use
-the backend on herdr and Rex (`mux`), and on tmux use the `hooks`
+the backend on Rex (`mux`), and on tmux use the `hooks`
 channel (claude, codex, cursor-agent, muse: a local paste confirmed by
 the harness's run count, a `--host` one `ack: sent` and confirmed by the
 next wait or send gate's read of the node); any other is refused
@@ -196,8 +197,8 @@ are re-export hubs.
 | `src/agents/observe.ts` | `AgentObservation`: the one typed read of an agent (registry id + pane, ctl incarnation, settled run count, `settled`, text + `lastTextTruncated`, pending, source/since, session file); `observeAgentStates` (one `readAgentStates` pass), `settledCloseInput` (the `applySettledClose` input, undefined unless ctl-settled). A seam, not a second poll loop |
 | `src/agents/errors.ts` | typed agent errors |
 | `src/helper-path.ts` | Cached PATH lookup for local helpers; picks the first executable regular file, keeps explicit paths, and leaves shell templates alone |
-| `src/exec-file.ts` | `execFileCapture` (+ `execGroupCapture`: own process group, reaped before it settles): child_process runner shared by the tmux, herdr and murmur executors (no execa) |
-| `src/agent-state.ts` | the `StateReading` shape and `UNKNOWN_REASON`; the mux channel's read (`readBaseStates`: herdr or Rex pane status, else murmur's pane option, else its remote snapshot, `murmur status --json` within 10 s, a timeout its own reason) and a gate's pane read; `unknown` with a reason |
+| `src/exec-file.ts` | `execFileCapture` (+ `execGroupCapture`: own process group, reaped before it settles): child_process runner shared by the tmux, Rex and murmur executors (no execa) |
+| `src/agent-state.ts` | the `StateReading` shape and `UNKNOWN_REASON`; the mux channel's read (`readBaseStates`: Rex pane status, else murmur's pane option, else its remote snapshot, `murmur status --json` within 10 s, a timeout its own reason) and a gate's pane read; `unknown` with a reason |
 | `src/channels/types.ts` | the channel seam (spec D4, plugins D9): `ChannelImpl`, what a channel implements: `readTurns` (its own read, `ChannelReading`: turn state and link, `alive` typed `never`; or `base`, the shared pane read), `watch` (`ChannelWatch` of `ChannelObservation`s, a dead agent only as the job's `JobGone`), and `AgentChannel`, the composed form mu reaches (`readStates`, `watch` and `lastRun` read-only): `readStates`, `watch`, `baseline`, `receipt` (`MessageCheck`), `lastRun` (the last text), `caps` (`ChannelCaps`, plugins spec D9: fence, receipt, dedupe, steer, interrupt, fresh, answer, command, watch, settleText) and its `fence` alias, `sendRun` (a delivery's result as the normalized reply, `ChannelSendReply`: `channel`, `ack` exact, acknowledged or none, `baseline`; null when it started no run; `SentFacts`, `SentRun`), `ChannelReading` (a channel's own read: turn state and its link, never `alive`), `describeSend` / `describeInterrupt` (the `sent … (via …)` line); `ChannelName` (open: a registry name; `BuiltinChannelName` the stored values); the delivery verbs (`ChannelDelivery`: `send`, `fresh`, `command`, `interrupt`, `abort`, `answer`) with `SendResult` (hooks: `ack`, `runCount`, `sessionId`), `AnswerResult`, `DeliveryOptions` (the opt-in `ctlGuard`), `InterruptResult`, `AbortOutcome`; `ChannelTarget` (with the row's `job`, a `JobRef`), `DeliveryTarget` (the whole row), `RunBaseline`; `CHANNEL_NAMES` (the `agents.channel` values); the ctl state types the rest of mu names (`CtlBlocked`, `CtlTool`, `CtlState`) |
 | `src/channels/ctl.ts` | `ctlChannel`: pi over its control socket: one `status` per read (`ctlRuntimeState`, `blockedReason`), `watchAgentRun` (the probe + `wait` + drop fallback `mu agent wait` uses), the probed baseline, `checkMessage` (`status {msgId}`, never throws), the bounded `wait` past the previous run for the last text; re-exports the write fence (`CtlWriteVetoedError`, `CTL_DEFAULT_TIMEOUT_MS`) and `newMsgId` |
 | `src/channels/ctl-deliver.ts` | the ctl channel's delivery: the incarnation fence (`fencedHello`), msgId receipts probed once and never resent (`checkMessage`), send, fresh, session commands (`parseSessionCommand`, `isSlashCommand`), interrupt, abort (status → abort → wait); the outdated-extension remedy (`requireFeature`, `respawnCommand`) |
@@ -221,16 +222,15 @@ are re-export hubs.
 | `src/reconcile.ts` | ghost prune and orphan surfacing |
 | `src/leftovers.ts` | `agent list`'s leftovers (`listLeftovers`, `leftoverLines`): reservations whose agent is gone (`goneReservations`, doctor's `lease-job` filter) with their recovery record folded in by agent id, the other records, each with one preview `next` from `reattachBlockers`; reads the job's stop-failure record (`readStopFailed`). No host command |
 | `src/jobs/types.ts` | the job kind seam (plugins spec D1, D8): `JobKindName` (`pane`, `lease`, `gate`), `JobLiveness` (`running`, `ended`, `lost`, `unknown`), `JobRef`, `JobCaps` (`view` bound or detached, `handle` pane, file or reply), `JobKind` (`status`, optional phased `checkSteps` for the phases in `caps.checks`; start, lookup and the generic stop and attach join with `HostView` and `EffectKey`) |
-| `src/jobs/view.ts` | a job's view and the only pane probes outside `src/mux/` (`test/jobs-imports.test.ts`; reconcile keeps its own `listPanes`, spec D8): `viewPresent` (view presence, `paneAlive`; the row rule, teardown, the spawn and rollback proofs) and its batched forms `sessionViews` (one session's `listPanes`: teardown, workstream liveness) and `readTmuxViews` (one `list-panes -a` with murmur's pane options: the mux channel's state read; an unlisted pane is absent), `viewState` (`paneResult`, never throws; gates), `viewRunning` (the pane's command runs: `paneResult`, else `paneOccupied` when asked, else `paneAlive`; host-channel admission and liveness), `viewStatus` and `viewsReportStatus` (a classifying backend's own `paneStatus`: a reported state is a present pane, else view presence decides; herdr's and Rex's mux reading), `viewPid` (`panePid`: muzzle placement, close's pane tree). `birthServer` (the mux server a view was born on: tmux's identity from the creation call, Rex's `instance_id` read before and after, herdr none) and `viewOnServer` (presence asked only of that server through the backend's fenced `paneOnServer`; another is `elsewhere`, a gone tmux server process `absent`): a file kind's view proof. The guard covers every form: a `MuxBackend` pane read, a raw `tmux`/`herdr`/`rex` call or binary, a tmux pane query word or `#{pane_*}` format, herdr's pane get/list |
+| `src/jobs/view.ts` | a job's view and the only pane probes outside `src/mux/` (`test/jobs-imports.test.ts`; reconcile keeps its own `listPanes`, spec D8): `viewPresent` (view presence, `paneAlive`; the row rule, teardown, the spawn and rollback proofs) and its batched forms `sessionViews` (one session's `listPanes`: teardown, workstream liveness) and `readTmuxViews` (one `list-panes -a` with murmur's pane options: the mux channel's state read; an unlisted pane is absent), `viewState` (`paneResult`, never throws; gates), `viewRunning` (the pane's command runs: `paneResult`, else `paneAlive`; host-channel admission and liveness), `viewStatus` and `viewsReportStatus` (a classifying backend's own `paneStatus`: a reported state is a present pane, else view presence decides; Rex's mux reading), `viewPid` (`panePid`: muzzle placement, close's pane tree). `birthServer` (the mux server a view was born on: tmux's identity from the creation call, Rex's `instance_id` read before and after) and `viewOnServer` (presence asked only of that server through the backend's fenced `paneOnServer`; another is `elsewhere`, a gone tmux server process `absent`): a file kind's view proof. The guard covers every form: a `MuxBackend` pane read, a raw `tmux`/`rex` call or binary, a tmux pane query word or `#{pane_*}` format |
 | `src/jobs/pane.ts`, `lease.ts`, `gate.ts` | the built-in kinds, all bound. `pane`: `paneUp` (ctl's and hooks' "is the agent up"). `lease`: the job handshake (`awaitLeaseJob`, `MU_SPAWN_JOB_MS`, `readJobFile`, fills the reservation; reads fail closed), `stop` (`runStop` on the recorded `host_stop`), `attach` (the attach template), liveness (the carrier pane runs), and its `host check` steps (`template`: shell, stop, attach, expanded never run; `agent`: the recorded job). `gate`: `readGate` as liveness |
 | `src/jobs/kinds.ts` | `jobKind`, `jobLiveness(db, job)` (the kind answers), `jobRunning` (the boolean the lease sites read; unknown throws), `gateJobRef`, `agentJobRef` (a row's job, as a channel target carries it), `answerProvesRunning` (the kind's `answer`: whether a reply from the job's own process, ctl's socket, stands in for liveness; pane and lease say so, gate does not), `withJobLiveness` (the one place a channel reading gets `alive`: from its link and the kind's answer, else the job's view; `stateRefJob` names a state ref's job), `jobUp` / `JobGone` / `isJobGone` (a watch's mid-turn "is the job gone": only `jobUp` mints the gone verdict) and `jobObservation` (a channel observation as the wait's, `JobGone` as `status` null). No channel or ctl module sets `alive` (`test/channel-names.test.ts`). Called by observe (gates) and reattach (the carrier) |
 | `src/mux/index.ts` | cluster barrel that `src/mux.ts` re-exports |
 | `src/mux/types.ts` | `MuxBackend` interface (`ensureSession`, `spawnAgent`, `listPanes`, `paneAlive`, `capture`, `attachCommands`, `killPaneCommand`), `attachShellLine`; `MuxError`, `PaneNotFoundError`, `NoMultiplexerError` |
-| `src/mux/binding.ts`, `src/agents/backend-binding.ts` | a row's backend by pane-id shape; the advisory spawn refusal (spec A §8.2) |
-| `src/mux/detect.ts` | `MU_MUX` → `HERDR_ENV` → `$TMUX` → `$REX_SESSION` → `PATH` detection order; `activeMux()` |
+| `src/mux/binding.ts`, `src/agents/backend-binding.ts` | a row's backend by pane-id shape, the retired herdr (`w1:p1`) kept as foreign so reconcile never reaps it; the advisory spawn refusal (spec A §8.2) |
+| `src/mux/detect.ts` | `MU_MUX` → `$TMUX` → `$REX_SESSION` → `PATH` detection order (`MU_MUX=herdr` fails: retired); `activeMux()` |
 | `src/mux/pane-ref.ts` | `PaneRef` pairs a tmux pane id with recorded birth evidence. A `VerifiedPaneRef`'s tmux effect is guarded on its server; a legacy row's unverified ref acts on the bare id (the pre-column check). A tmux birth must yield a verified ref. |
 | `src/mux/tmux.ts` | `tmux()` wrapper, birth reply with server identity, and guarded actions (`if-shell -F`, exit 97 on a mismatch). Agent attach targets the stable pane id; a session kill checks verified pane membership in the acting call. No `sendToPane`; `pasteToPane` and `sendKeys` are for the `hooks` channel. Paste text is staged by argv in a private buffer; only the guarded paste can reach a pane. Guarded command words encode newlines so tmux does not strip indentation or comments. Long literal keys use bounded `send-keys -l` calls, each checking the same server in the acting call; the first failure stops delivery. |
-| `src/mux/herdr.ts` | herdr backend: JSON socket API, atomic send, native pane status, `spawnAgent` (bare pane, `agent start`) |
 | `src/mux/rex.ts` | Rex backend: the `rex()` wrapper over the server API (`rex api call`), one-call `spawnAgent` with launch env pinned after interactive shell startup, OSC 7501 pane status, paste send, attach as the app's `session.select` |
 | `src/tmux.ts` | tmux-only re-exports: `MU_TMUX_SOCKET` seam, `sleep` / `setSleepForTests` |
 | `src/ctl/path.ts` | `ctlSocketPath` keeps readable and hashed local paths under the state dir when they fit in 103 bytes; otherwise it hashes the resolved state dir, workstream and agent into a private per-uid directory. `remoteCtlSocketPath`, `carrierJobFilePath` and `MU_CTL_SOCK` are unchanged by the local fallback. `linkForwardSocket` gives a session spawn a fresh forward path linked from the derived one; `removeCtlSocket` removes the link, and its target only when that is the name's own forward socket |
@@ -337,7 +337,7 @@ are re-export hubs.
 | `tools/eval/` | the eval harness: scripted scenarios and judges run against a built surface (pi, claude or codex orchestrators; fake or real hook-harness workers), the release matrix, the cold-guess probe, the next-step probe and the hill-r2 tournament driver; reports in [docs/eval/](eval/README.md); not shipped |
 | `tools/tui-dogfood/` | the TUI dogfood kit: seven seeded dashboard scenarios on a private tmux socket and a PTY smoke test ([README](../tools/tui-dogfood/README.md)); `dashboard.sh` seeds its scenario 4; not shipped |
 | `docs/history/` | the changelogs of mu 1 to 4, one file per major; not shipped |
-| `test/` | Vitest suites: `pure` reuses forks for the explicit allowlist; `isolated` keeps separate forks and fixture setup. `*.integration.test.ts` may touch real tmux, Rex, herdr or VCS; real tmux and Rex fixture servers are tracked in a per-run server registry for teardown ([test conventions](../test/README.md), [sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
+| `test/` | Vitest suites: `pure` reuses forks for the explicit allowlist; `isolated` keeps separate forks and fixture setup. `*.integration.test.ts` may touch real tmux, Rex or VCS; real tmux and Rex fixture servers are tracked in a per-run server registry for teardown ([test conventions](../test/README.md), [sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
 
 The shipped contract is
 [reference/surface-contract.md](reference/surface-contract.md).

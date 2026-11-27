@@ -102,9 +102,9 @@ describe("host exec: the outcome table", () => {
     expect(r.remote).toBeUndefined();
   });
 
-  it("herdr allows pane-free exec through the host's link", async () => {
+  it("Rex allows pane-free exec through the host's link", async () => {
     await plugin();
-    const mux = installMux("herdr", []);
+    const mux = installMux("rex", []);
     try {
       expect(await hostExec(db, "p", { script: "printf pane-free" })).toMatchObject({
         exit: 0,

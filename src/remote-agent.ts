@@ -41,7 +41,6 @@ export const LOCAL_ONLY_ENV = [
   "MU_MUX",
   "MU_REX_SERVER",
   "MU_TMUX_SOCKET",
-  "MU_HERDR_SESSION",
   "MU_AGENT",
   "MU_HOST",
   "MU_AGENT_NAME",

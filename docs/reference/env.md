@@ -19,24 +19,20 @@ milliseconds; `0` disables a wait unless noted.
 
 | Name | Effect | Default |
 | --- | --- | --- |
-| `MU_MUX` | Force `tmux`, `herdr` or `rex`, skipping mux detection. An unknown value fails the invocation. | detected |
-| `HERDR_ENV` | Read only. `1` (set by herdr in its panes) selects herdr; outranks `$TMUX`. | |
+| `MU_MUX` | Force `tmux` or `rex`, skipping mux detection. An unknown value fails the invocation, and so does `herdr` (retired in mu 6). | detected |
 | `TMUX`, `TMUX_PANE` | Read only. Either one (set by tmux in its panes) selects tmux. `$TMUX` gates reading the current session name, used only as the suggestion in the missing-`-w` error: it never routes a verb. `mu me` / `mu state --me` never read `$TMUX_PANE` (identity is the injected `MU_AGENT_NAME` or `PI_SESSION_ID`); only `mu task list --mine` and a few older self-readers still fall back to it when no `MU_AGENT_NAME` is injected. | |
-| `HERDR_WORKSPACE_ID` | Read only. Set by herdr in its panes; pane listing with no target reads this workspace first. | |
-| `HERDR_PANE_ID` | Read only. Set by herdr in its panes. | |
 | `MU_TMUX_SOCKET` | Run every tmux call on a private server (`-L <name>`) with `-f /dev/null`, so `~/.tmux.conf` is not loaded. The test suite uses it, and so can you to keep a crew off your own tmux server (a demo, a smoke test). Attach lines mu prints then carry `-L <name>`, and the dashboard's `a` nests a client on purpose when you are inside another tmux. tmux only. | unset: tmux's default server |
-| `REX_SESSION`, `REX_BLOCK` | Read only. Set by Rex in its terminals; `$REX_SESSION` with `TERM_PROGRAM=rex` selects rex, below tmux and herdr. | |
+| `REX_SESSION`, `REX_BLOCK` | Read only. Set by Rex in its terminals; `$REX_SESSION` with `TERM_PROGRAM=rex` selects rex, below tmux. | |
 | `REX_BIN_DIR` | Read only. Set by Rex in its terminals; mu runs `$REX_BIN_DIR/rex`, else `rex` on `PATH`. | |
 | `REX_CLIENT` | The Rex app an attach switches when several are connected (read by `rex` itself). | the only app |
 | `MU_REX_SERVER` | Run every rex call against this server (`rex -S <server>`), e.g. a private `rex server run --listen unix://…` for tests. rex only. | the local Rex server |
-| `MU_HERDR_SESSION` | Named herdr server (`--session <name>`). herdr only. Tests must set it to a non-default name. | herdr default session |
 
 ## Spawn
 
 | Name | Effect | Default |
 | --- | --- | --- |
-| `MU_<CLI>_COMMAND` | Executable for `--cli <cli>`; hyphens become underscores (`--cli pi-meta` reads `MU_PI_META_COMMAND`). May hold arguments. `--command` wins; the spawn line names the env var when it supplied the command. On herdr, spawn refuses both with exit 2. | the cli value |
-| `MU_PI_CHANNEL` | `hooks` spawns a local pi on tmux on the `hooks` channel, the pi fallback (spec D15), for a pi build that breaks murmur's store or a native module. The row records `hooks` and every verb follows the row, so unsetting it later moves no agent. The pane gets the variable too, which tells murmur's pi extension to write inbox events instead of opening its store; mu's pi extension still serves ctl for the spawn handshake, delegates and doctor. Only `hooks` selects it, as murmur reads it. A remote pi and a pi on herdr or Rex stay on ctl. A task-bound spawn (`--task`) hands it the brief as every `hooks` worker gets one: a brief file and a pasted pointer. | unset: pi on ctl |
+| `MU_<CLI>_COMMAND` | Executable for `--cli <cli>`; hyphens become underscores (`--cli pi-meta` reads `MU_PI_META_COMMAND`). May hold arguments. `--command` wins; the spawn line names the env var when it supplied the command. | the cli value |
+| `MU_PI_CHANNEL` | `hooks` spawns a local pi on tmux on the `hooks` channel, the pi fallback (spec D15), for a pi build that breaks murmur's store or a native module. The row records `hooks` and every verb follows the row, so unsetting it later moves no agent. The pane gets the variable too, which tells murmur's pi extension to write inbox events instead of opening its store; mu's pi extension still serves ctl for the spawn handshake, delegates and doctor. Only `hooks` selects it, as murmur reads it. A remote pi and a pi on Rex stay on ctl. A task-bound spawn (`--task`) hands it the brief as every `hooks` worker gets one: a brief file and a pasted pointer. | unset: pi on ctl |
 | `MU_SEND_ACK_MS` | `hooks` channel: how long a paste (or `mu agent answer`) waits for its hook event, polling `murmur pane --json` every 250ms. A send whose `run_count` did not rise reports `ack: unknown` (`delivered: false`, reason `unconfirmed`) and is never resent. | `10000` |
 | `MU_FIRST_SEND_ACK_MS` | `hooks` channel: the `MU_SEND_ACK_MS` of mu's first prompt to a local codex or muse worker (`spawn --send`, a fresh task spawn's pointer, the first `mu agent send` without `--force`), when murmur reports the pane with no agent row and the harness has murmur's hooks. A launcher can spend well over 10 s installing plugins before the harness reads the paste. It also bounds mu's wait for codex's ready screen before that first paste (the harness row's `readyMarks`); the ack gets what is left of it, at least `MU_SEND_ACK_MS`. Every other send, a forced one to a pane that still has no row included, uses `MU_SEND_ACK_MS`. | `60000` |
 | `MU_HOOK_SILENCE_MS` | `hooks` channel: how long after mu's last prompt to an agent (its latest non-answer `agent.send` op since spawn, from its `at=` time, taken before the paste) a timed-out `mu wait` on it adds a notice with the pane's last lines: an ack that was not confirmed, and after a fresh read of a remote node, no murmur row or a row that is not running, not blocked, on the same run and unchanged since the send. A dialog that took the paste (codex's folder trust or hooks review) and a harness whose hooks never run read the same. Advice only: the wait never ends on it. `0` turns it off. | `60000` |
@@ -84,8 +80,8 @@ agent there. The directory ignores `MU_STATE_DIR`, and `XDG_STATE_HOME` too,
 since a hook may have neither: the wrapper writes only
 `~/.local/state/mu-next/anchors`, which murmur reads first. A murmur older
 than that order, run from a hook whose `XDG_STATE_HOME` is set elsewhere,
-finds no anchor and falls back to the env. pi panes, and herdr and Rex panes,
-do not use that wrapper. On Rex, local launch env is pinned after shell rc,
+finds no anchor and falls back to the env. pi panes, and Rex panes, do not
+use that wrapper. On Rex, local launch env is pinned after shell rc,
 including `MU_MUX`, `MU_REX_SERVER` and `MU_SYNC_DIR` (empty means sync off).
 
 A `--host` agent gets exactly `MU_MANAGED_AGENT`, `MU_AGENT_NAME`,

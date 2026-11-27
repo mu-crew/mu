@@ -18,7 +18,6 @@ import {
   type HostLease,
   type HostProfile,
   HostProfileError,
-  HostSpawnUnsupportedError,
   isValidHostName,
   LOCAL_LOOP_TRANSPORT,
   releaseHostChannel,
@@ -71,12 +70,9 @@ export function pluginKindOf(host: HostView): PluginJobKind | undefined {
 export async function refuseRemoteSpawnMux(db: Db, opts: SpawnAgentOptions): Promise<void> {
   if (opts.host === undefined) return;
   const mux = await activeMux();
-  if (mux.runsShellCommand && mux.carrierViews) return;
+  if (mux.carrierViews) return;
   const host = resolveHost(db, opts.host);
-  if (mux.runsShellCommand) return refuseCarrierViewMux(mux, host.name, carrierViewOf(host));
-  // Switching multiplexers cannot make a link-only host spawnable.
-  requireHostJobKind(host);
-  throw unsupportedSpawnMux(host, opts, mux.name);
+  refuseCarrierViewMux(mux, host.name, carrierViewOf(host));
 }
 
 function muleWorkspaceProfile(view: HostView): HostProfile {
@@ -115,10 +111,6 @@ export async function requireMuleWorkspace(
   if (opts.root === undefined && profile.repo === null) {
     throw new HostProfileError(`host ${name} has no default repo: pass --root <remote repo path>`);
   }
-  const mux = await activeMux();
-  if (!mux.runsShellCommand) {
-    throw new HostSpawnUnsupportedError(name, mux.name, "local pi with a mule workspace", false);
-  }
   return profile;
 }
 
@@ -143,15 +135,6 @@ export function refuseCarrierViewMux(
 ): void {
   if (mux.carrierViews || what === undefined) return;
   throw new CarrierViewUnsupportedError(host, mux.name, what);
-}
-
-function unsupportedSpawnMux(host: HostView, opts: SpawnAgentOptions, mux: string) {
-  const part = pluginKindOf(host)
-    ? "job view command"
-    : isCommandGate(opts)
-      ? "command gate"
-      : "managed argv";
-  return new HostSpawnUnsupportedError(host.name, mux, part, carrierViewOf(host) !== undefined);
 }
 
 /**
@@ -227,9 +210,7 @@ export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise
   // A removed agent's tree on this host may still sit at the name's path, or parked beside
   // it: a new tree there could strand that record. Refused before any effect.
   if (opts.worktree) refuseRecoveredWorktree(db, opts.workstream, opts.name, host);
-  const mux = await activeMux();
-  if (!mux.runsShellCommand) throw unsupportedSpawnMux(view, opts, mux.name);
-  refuseCarrierViewMux(mux, host, carrierViewOf(view));
+  refuseCarrierViewMux(await activeMux(), host, carrierViewOf(view));
   return profile;
 }
 

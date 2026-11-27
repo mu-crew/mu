@@ -4,12 +4,11 @@
 // ─── Why this exists ───────────────────────────────────────────────────
 //
 // Two backends means two executor seams (`setTmuxExecutor`,
-// `setHerdrExecutor`) plus a backend selector (`setMuxForTests`). Before
-// this file, a test that wanted herdr had to know to call
-// setMuxForTests + setHerdrExecutor TOGETHER, in that order, and reset
-// BOTH. Forgetting the reset leaks a stubbed executor into the next
+// `setRexExecutor`) plus a backend selector (`setMuxForTests`). A test
+// that wants Rex must call setMuxForTests + setRexExecutor TOGETHER and
+// reset BOTH. Forgetting the reset leaks a stubbed executor into the next
 // file in the fork; forgetting the selector runs the assertions against
-// tmux while stubbing herdr, which passes for the wrong reason.
+// tmux while stubbing Rex, which passes for the wrong reason.
 //
 // `installMux()` collapses all of that into one call and one teardown.
 // A test says which backend it is testing; the harness knows which
@@ -22,13 +21,11 @@
 // need a real multiplexer you are writing an `*.integration.test.ts`
 // and must gate on `tmuxIntegrationAvailable()`.
 
-import { execa } from "execa";
 import { paneRef, requireVerifiedPane, type VerifiedPaneRef } from "../src/mux/pane-ref.js";
 import {
   type MuxBackend,
   type MuxBackendName,
   muxByName,
-  setHerdrExecutor,
   setMuxForTests,
   setRexExecutor,
 } from "../src/mux.js";
@@ -37,7 +34,7 @@ import { FAKE_SERVER_IDENTITY, withServerIdentity } from "./_verbs-mock.js";
 
 // ─── Shared executor shape ─────────────────────────────────────────────
 //
-// `TmuxExecResult` and `HerdrExecResult` are structurally identical, and
+// `TmuxExecResult` and `RexExecResult` are structurally identical, and
 // so are the two executor types. One local alias lets the harness treat
 // both backends uniformly instead of branching on types that are the
 // same shape.
@@ -55,8 +52,8 @@ export type MuxResponse = MuxExecResult | string;
 
 /**
  * Prefix-matched routing table. The first entry whose key is a prefix of
- * the space-joined args vector wins, so `["pane get w1:p1", …]` can be
- * narrower than `["pane get", …]` when order says so. An empty-string
+ * the space-joined args vector wins, so `["list-panes -t x", …]` can be
+ * narrower than `["list-panes", …]` when order says so. An empty-string
  * key matches everything (catch-all).
  */
 export type MuxRoutes = ReadonlyArray<readonly [string, MuxResponse]>;
@@ -87,12 +84,9 @@ function respond(response: MuxResponse): MuxExecResult {
  * afterEach(() => mux.restore());
  *
  * it("lists panes", async () => {
- *   mux = installMux("herdr", [
- *     ["workspace list", WORKSPACE_LIST],
- *     ["pane list", PANE_LIST],
- *   ]);
+ *   mux = installMux("tmux", [["list-panes", "@1|%1|pi\n@1|%2|pi\n"]]);
  *   expect(await listPanes("mu-topotest")).toHaveLength(2);
- *   expect(mux.argsOf(0)).toEqual(["workspace", "list"]);
+ *   expect(mux.argsOf(0)?.[0]).toBe("list-panes");
  * });
  * ```
  *
@@ -129,9 +123,7 @@ export function installMux(
   const executor: MuxExecutor = backend === "tmux" ? withServerIdentity(recording) : recording;
 
   const previousBackend = setMuxForTests(muxByName(backend));
-  const setExecutor = { herdr: setHerdrExecutor, rex: setRexExecutor, tmux: setTmuxExecutor }[
-    backend
-  ];
+  const setExecutor = { rex: setRexExecutor, tmux: setTmuxExecutor }[backend];
   const previousExecutor = setExecutor(executor);
 
   let restored = false;
@@ -166,7 +158,7 @@ export function installUnreachableMux(
   };
   const stub: Record<string, unknown> = { name: backend };
   for (const [key, value] of Object.entries(real)) {
-    // Methods reject; capability flags (spawnAgentWaitsReady) keep their value.
+    // Methods reject; capability flags (carrierViews) keep their value.
     stub[key] = typeof value === "function" ? boom : value;
   }
   const previousBackend = setMuxForTests(stub as unknown as MuxBackend);
@@ -182,19 +174,17 @@ export function installUnreachableMux(
  * is installed, and both executors fail like a missing binary, so
  * `activeMux()` itself throws `NoMultiplexerError`. (`installUnreachableMux`
  * installs a backend, so detection never runs; it models a dead server.)
- * The caller must have `$TMUX`, `$TMUX_PANE`, `$HERDR_ENV`, `$MU_MUX` unset.
+ * The caller must have `$TMUX`, `$TMUX_PANE`, `$MU_MUX` unset.
  */
 export function installNoMux(): { restore(): void } {
   const gone: MuxExecutor = async () => ({ stdout: "", stderr: "not found", exitCode: 127 });
   const previousBackend = setMuxForTests(undefined);
   const previousTmux = setTmuxExecutor(gone);
-  const previousHerdr = setHerdrExecutor(gone);
   const previousRex = setRexExecutor(gone);
   return {
     restore() {
       setMuxForTests(previousBackend);
       setTmuxExecutor(previousTmux);
-      setHerdrExecutor(previousHerdr);
       setRexExecutor(previousRex);
     },
   };
@@ -235,108 +225,42 @@ export async function killPrivateSession(session: string): Promise<void> {
   await tmux(["kill-session", "-t", `=${session}:`]).catch(() => {});
 }
 
-// ─── The herdr blast shield ────────────────────────────────────────────
-//
-// READ THIS BEFORE WRITING A HERDR INTEGRATION TEST.
-//
-// tmux gets a private socket. herdr does NOT have an equivalent: its
-// only isolation is `--session <name>` (a named server under
-// ~/.config/herdr/sessions/<name>/), which mu routes to via
-// MU_HERDR_SESSION. That difference matters enormously:
-//
-//   - tmux: tests inherit a private socket directory and socket name.
-//   - herdr: worst case, a buggy test talks to the DEFAULT session and
-//     destroys the user's real panes — with the agents and unsaved work
-//     inside them. There is no undo and no sweep that can tell a user
-//     pane from test residue.
-//
-// So the guard here is EXPLICIT rather than structural, and it is a
-// runtime assertion rather than a comment:
-//
-//   1. `assertHerdrIsolated()` REFUSES to proceed unless
-//      MU_HERDR_SESSION names a non-default session.
-//   2. `herdrTestExec()` REFUSES the fatal verbs outright — no
-//      `server stop`, no `server kill`, no killing the main process —
-//      even inside a correctly isolated session, because a stopped
-//      server is shared-fate: `herdr server stop` is not
-//      session-scoped in any way mu can rely on.
-//
-// Cleanup for herdr integration tests is therefore per-entity (close
-// the workspaces you created), never "nuke the server".
+// ─── A Rex block that takes sends ──────────────────────────────────────
 
-/** Sessions that are the user's real work, never a test's to drive. */
-const FORBIDDEN_SESSIONS: ReadonlySet<string> = new Set(["default", ""]);
+/** A valid Rex pane id (a block handle). */
+export const REX_PANE = "block:01a1a0d4-b59b-7416-9cdb-67e9cd36dd6b";
 
 /**
- * Verb prefixes that can take down the user's whole herdr — checked
- * against the space-joined args vector. `server stop` / `server
- * restart` are shared-fate regardless of `--session`.
+ * A Rex executor whose every block resolves and takes a paste and a write:
+ * the `mux` channel's send to a non-pi agent. `sent` collects each pasted text.
  */
-const FORBIDDEN_COMMANDS: readonly string[] = ["server stop", "server restart", "server kill"];
-
-export class HerdrTestSafetyError extends Error {
-  constructor(message: string) {
-    super(`herdr test safety: ${message}`);
-    this.name = "HerdrTestSafetyError";
-  }
-}
-
-/**
- * Throw unless we are pointed at an isolated, named herdr session.
- *
- * Call this at the top of any herdr integration test's beforeEach — and
- * note `herdrTestExec()` calls it on EVERY command, so a test that
- * forgets still cannot touch the default session.
- */
-export function assertHerdrIsolated(): string {
-  const session = process.env.MU_HERDR_SESSION;
-  if (session === undefined || FORBIDDEN_SESSIONS.has(session)) {
-    throw new HerdrTestSafetyError(
-      `MU_HERDR_SESSION must name a private test session, got ${JSON.stringify(session)}. ` +
-        "Refusing to drive the user's default herdr server — that would destroy their real panes. " +
-        'Set MU_HERDR_SESSION="mu-test-<unique>" first (see test/_mux.ts).',
-    );
-  }
-  return session;
-}
-
-/**
- * Run a real `herdr` command against the ISOLATED test session.
- *
- * The only sanctioned way for a test to reach the herdr binary. It
- * asserts isolation and refuses server-fatal verbs before spawning
- * anything. Every herdr integration test should route its fixture
- * setup/teardown through here rather than calling execa directly.
- */
-export async function herdrTestExec(args: readonly string[]): Promise<MuxExecResult> {
-  const session = assertHerdrIsolated();
-  const key = args.join(" ");
-  for (const forbidden of FORBIDDEN_COMMANDS) {
-    if (key.startsWith(forbidden)) {
-      throw new HerdrTestSafetyError(
-        `refusing to run "herdr ${key}" — it takes down the server the user's real panes live in. ` +
-          "Clean up per-entity instead (close the workspaces the test created).",
-      );
-    }
-  }
-  const result = await execa("herdr", ["--session", session, ...args], { reject: false });
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    exitCode: result.exitCode ?? null,
+export function rexSendExecutor(sent: string[] = []): MuxExecutor {
+  return async (args) => {
+    const input = JSON.parse(args[3] ?? "{}") as {
+      queries?: string[];
+      method?: string;
+      event?: { payload?: { text?: string } };
+    };
+    if (args[2] === "block.event") sent.push(input.event?.payload?.text ?? "");
+    const reply =
+      args[2] === "target.resolve"
+        ? {
+            results: (input.queries ?? [REX_PANE]).map((query) => ({
+              query,
+              status: "resolved",
+              target: {
+                kind: "block",
+                session_id: "session:s",
+                window_id: "window:w",
+                block_id: query,
+              },
+            })),
+          }
+        : input.method === "modes"
+          ? { modes: [{ name: "bracketed_paste", number: 2004, set: true }] }
+          : input.method === "write"
+            ? { bytes_written: 1 }
+            : {};
+    return { stdout: JSON.stringify(reply), stderr: "", exitCode: 0 };
   };
-}
-
-/**
- * A unique MU_HERDR_SESSION name, so two concurrent `npm test` runs
- * never share a herdr server. Same construction as `freshWorkstream()`
- * in test/_fixture.ts: pid + timestamp + randomness, all base36.
- */
-export function freshHerdrSession(prefix = "mu-test"): string {
-  const pid = process.pid.toString(36).slice(-4);
-  const now = Date.now().toString(36).slice(-6);
-  const rand = Math.floor(Math.random() * 36 ** 4)
-    .toString(36)
-    .padStart(4, "0");
-  return `${prefix}-${pid}-${now}-${rand}`;
 }

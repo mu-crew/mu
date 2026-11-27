@@ -12,6 +12,15 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING (semver-major, mu 6): the herdr backend.** mu drives tmux (vtmux or vanilla) and Rex only (spec 2026-11-27-rex-first-class §5). `src/mux/herdr.ts` is gone, and with it the SDK's `herdrBackend`, `HerdrError`, `HerdrSyntaxError`, `HerdrUnsupportedCliError`, `HerdrCommandOverrideError`, `HerdrWorkspaceGroupCloseError`, `isHerdrStatusUsable`, `setHerdrExecutor` and `resetHerdrExecutor`. `MuxBackendName` is `"rex" | "tmux"`. The herdr-only `MuxBackend` members go too: `spawnAgentWaitsReady`, `runsShellCommand`, `paneOccupied`, `reloadCommands`, `SpawnAgentPaneOptions.commandSource`, `SendOptions.readinessMs` and the `paste-vanished` send warning. `HostSpawnUnsupportedError` (only herdr raised it) is removed from the SDK, as is `viewRunning`'s `occupied` option and `AgentExtensionOutdatedError.recovery.muxReload`. `MU_MUX=herdr` now fails with a retirement message (exit 1); `$HERDR_ENV` and `MU_HERDR_SESSION` are no longer read.
+
+### Changed
+
+- A row a herdr pane left (pane id `w1:p1`) stays recognised as a **retired backend** (`src/mux/binding.ts`): it is always foreign, so `reconcile` in full mode never reaps it as a ghost or reopens its task, `mu state` reports it `unknown` (`foreign backend: herdr`), and a spawn in its workstream refuses without offering `MU_MUX=herdr`. No state-directory change: the rows are kept as they are.
+- `agent.send_unsupported` (a non-pi, non-hook CLI on tmux) points to Rex (`MU_MUX=rex`) instead of herdr.
+
 ### Fixed
 
 - `LogRow.workstreamName` holds the real workstream name (the key's part before the first `/`), not the raw `ops.key`; `key` is unchanged.

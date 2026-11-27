@@ -1,7 +1,7 @@
 # Repo guide for AI coding agents
 
-This repo builds **mu**: a CLI that runs AI agents in tmux, herdr or
-Rex panes, coordinated through a task DAG.
+This repo builds **mu**: a CLI that runs AI agents in tmux or Rex
+panes, coordinated through a task DAG.
 
 ## Read these first
 
@@ -56,7 +56,7 @@ first.
 - Strict TypeScript with `noUncheckedIndexedAccess`, ESM only. Use
   `unknown` instead of `any`, and early returns instead of `!`.
 - Throw typed error classes (`AgentNotFoundError`, `CycleError`,
-  `MuxError` and its `TmuxError` / `HerdrError` / `RexError` subclasses, …) so
+  `MuxError` and its `TmuxError` / `RexError` subclasses, …) so
   `handle()` maps each to an exit code.
 - Auto-fix sort and format with `npx biome check --write src test`.
   Never add `--unsafe`: it rewrites `delete process.env.X` into
@@ -78,24 +78,20 @@ first.
 - The fast tier (`*.test.ts`) stays in-process: mocked tmux and VCS,
   per-test temp DBs, no real tmux/git/jj/sl, no sleeps over 50ms.
 - Name full-only tests `*.integration.test.ts`. They may use real
-  tmux, herdr, Rex, VCS fixtures, or subprocesses. Real-tmux tests run on the
+  tmux, Rex, VCS fixtures, or subprocesses. Real-tmux tests run on the
   private socket and need no `$TMUX`. Set `process.env.MU_SPAWN_LIVENESS_MS = "0"` in
   `beforeEach` when the spawned process is meant to live long.
 - Integration tests use unique session names
   (`mu-test-<pid>-<ts>-<rand>`), poll (50ms × 10) instead of sleeping,
   and wrap `afterEach` cleanup in `try {} catch {}`. Unit tests call
   `setSleepForTests(async () => {})`.
-- **Never stop the herdr server or kill its process from a test.** It
-  destroys the user's real panes. herdr isolation is only a named
-  session (`MU_HERDR_SESSION`, enforced by `assertHerdrIsolated()`), so
-  close only what you created.
 - `openDb()` refuses the real DB under vitest. Use `MU_DB_PATH` or
   `{ path }`.
 - In tests, `openDb` on a new path copies a template DB built once per
   run (`test/_db-template.ts`). A test that pins fresh-file behaviour
   (the DDL, a refusal leaving the file empty) calls
   `vi.unmock("../src/db.js")`.
-- `test/_setup.ts` clears inherited `MU_*` vars except `MU_HERDR_SESSION`.
+- `test/_setup.ts` clears inherited `MU_*` vars.
   Opt in per test with `withEnv()` from `test/_env.ts`.
 - Register extra tmux sockets and start private Rex servers through
   `test/_server-registry.ts` so teardown can stop them after an aborted run.
@@ -144,9 +140,8 @@ first.
    it adds a term, and CHANGELOG. Remove any `mu sql` workaround it
    replaces. Touch `skills/mu/SKILL.md` only for a gotcha `--help`
    cannot state.
-4. Smoke-test against real tmux, and on herdr with `MU_MUX=herdr` plus
-   a private `MU_HERDR_SESSION` (on Rex: `MU_MUX=rex` plus `MU_REX_SERVER`
-   naming a private `rex server run`) if it touches agents:
+4. Smoke-test against real tmux, and on Rex with `MU_MUX=rex` plus
+   `MU_REX_SERVER` naming a private `rex server run` if it touches agents:
 
    ```bash
    MU_SYNC_DIR= MU_DB_PATH=/tmp/mu-smoke.db MURMUR_STATE_DIR=/tmp/mu-smoke-murmur \
@@ -189,7 +184,7 @@ Call sites use `await activeMux()` and never name a backend.
 
 1. Add the method to `MuxBackend` (`src/mux/types.ts`) with a comment
    saying what it means.
-2. Implement it in `src/mux/tmux.ts`, `src/mux/herdr.ts` and `src/mux/rex.ts`. A backend
+2. Implement it in `src/mux/tmux.ts` and `src/mux/rex.ts`. A backend
    with no equivalent no-ops instead of throwing.
 3. If only one backend can do it, make it optional and branch on the
    method's presence, not on `mux.name`.
@@ -197,8 +192,7 @@ Call sites use `await activeMux()` and never name a backend.
    (spawn, send, kill). Wrap best-effort calls in try/catch, like
    `resolveWorkerIdentity` in `src/tasks/claim.ts`.
 
-Run tmux only through `tmux(args)`, herdr only through
-`herdr(args)` and Rex only through `rex(args)`. A send goes through the
+Run tmux only through `tmux(args)` and Rex only through `rex(args)`. A send goes through the
 channel the agent's row recorded at spawn (`src/channels/`). pi agents are
 driven through the control socket (`ctl`), not the multiplexer. A hook
 harness on tmux (claude, codex, cursor-agent, muse, and pi on its
@@ -208,8 +202,7 @@ confirmed when the harness's `run_count` in murmur's pane inbox rises; an
 unconfirmed one reports `unknown` and is never resent. A `--host` worker's
 send reports `ack: sent` without polling; the next wait or send gate reads
 the node, which confirms it. Every other pane is on `mux`:
-herdr's `agent prompt` is one atomic call, Rex pastes through its
-`sendToPane`, and tmux refuses the send (`AgentSendUnsupportedError`; it has
+Rex pastes through its `sendToPane`, and tmux refuses the send (`AgentSendUnsupportedError`; it has
 no `sendToPane`).
 
 ## Known traps

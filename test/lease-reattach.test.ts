@@ -40,7 +40,6 @@ import {
   releaseCarrierJob,
   reserveCarrierJob,
 } from "../src/carrier-jobs.js";
-import { classifyError } from "../src/cli/handle.js";
 import { carrierJobFilePath, ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -270,32 +269,6 @@ const snapshot = () => ({
   jobs: listCarrierJobs(db),
   recs: listRemoteRecoveries(db),
 });
-
-it.each(["preview", "apply"] as const)(
-  "herdr refuses lease reattach %s before effects",
-  async (mode) => {
-    reaped();
-    mux.restore();
-    mux = installMux("herdr", []);
-    const sock = ctlSocketPath("auth", "worker-1", dir);
-    mkdirSync(dirname(sock), { recursive: true });
-    writeFileSync(sock, "stale forward");
-    const before = snapshot();
-    const err = await failure(
-      mode === "preview" ? previewReattach(db, "auth", "worker-1") : apply(),
-    );
-    expect(err).toBeInstanceOf(ReattachRefusedError);
-    expect(classifyError(err).exitCode).toBe(4);
-    expect((err as Error).message).toMatch(/herdr.*lease attach command.*use tmux(?! or)/);
-    expect(mux.calls).toEqual([]);
-    expect(order()).toEqual([]);
-    expect(snapshot()).toEqual(before);
-    expect(readFileSync(sock, "utf8")).toBe("stale forward");
-    expect(readFileSync(jobFile(), "utf8")).toBe("job-1\n");
-    expect(existsSync(markerPath(db, "auth", "worker-1"))).toBe(false);
-    expect(existsSync(dirname(agentLockPath(db, "auth", "worker-1")))).toBe(false);
-  },
-);
 
 describe("happy path", () => {
   it("a reaped --worktree agent: preview gives a rev; apply installs the row, drops the record, rebinds", async () => {

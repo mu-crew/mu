@@ -109,8 +109,8 @@ export async function cmdInit(
   if (attach !== undefined) console.log(pc.dim(`attach: ${attach}`));
 }
 
-/** The attach line, or none when the backend cannot resolve the target
- *  (herdr: no such workspace): it is information, never a failure. */
+/** The attach line, or none when the backend cannot resolve the target:
+ *  it is information, never a failure. */
 async function attachLine(mux: MuxBackend, target: AttachTarget): Promise<string | undefined> {
   try {
     return attachShellLine(await mux.attachCommands(target));

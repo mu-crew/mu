@@ -85,12 +85,11 @@ export function checkDbIntegrity(
 }
 
 /** Column width for the `label : value` environment block. Wide enough
- *  for the longest label any backend contributes — `$HERDR_WORKSPACE_ID`
- *  at 19 — so the colons stay in one column on every mux. */
+ *  for the longest label any backend contributes, so the colons stay in one column on every mux. */
 const LABEL_WIDTH = 19;
 const pad = (s: string): string => s.padEnd(LABEL_WIDTH);
 
-/** Where agent state comes from: the mux itself on herdr and Rex, murmur on tmux. A
+/** Where agent state comes from: the mux itself on Rex and vtmux, murmur on tmux. A
  *  live mu extension makes murmur optional for pi agents. */
 function agentStateCheck(health: MuxHealth | undefined, muExtLive: boolean): DoctorCheck {
   if (health?.vtmux !== undefined) {
@@ -133,7 +132,7 @@ async function muxHealth(): Promise<MuxHealth | undefined> {
  *  NOT this case: detached servers start on demand. */
 function noMuxFailure(health: MuxHealth | undefined): NoMultiplexerError | null {
   if (health?.ok === true) return null;
-  return new NoMultiplexerError(health === undefined ? ["tmux", "herdr", "rex"] : [health.name]);
+  return new NoMultiplexerError(health === undefined ? ["tmux", "rex"] : [health.name]);
 }
 
 /** Render a hazard list as doctor rows plus a remediation block per

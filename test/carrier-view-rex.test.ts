@@ -50,12 +50,8 @@ const h = pluginHostFixture({ handshakeInProcess: true });
 const asRex = () => h.stubMux({ name: "rex", carrierViews: rexBackend.carrierViews });
 
 it("Rex has no carrier views today; tmux has them", async () => {
-  const { tmuxBackend, herdrBackend } = await import("../src/mux.js");
-  expect([tmuxBackend.carrierViews, rexBackend.carrierViews, herdrBackend.carrierViews]).toEqual([
-    true,
-    false,
-    false,
-  ]);
+  const { tmuxBackend } = await import("../src/mux.js");
+  expect([tmuxBackend.carrierViews, rexBackend.carrierViews]).toEqual([true, false]);
 });
 
 describe("a plugin job's view on Rex", () => {

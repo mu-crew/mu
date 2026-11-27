@@ -6,7 +6,7 @@
 // `command` op; a hook harness's pane on tmux (`hooks`) by tmux's paste,
 // after clearing the input line, confirmed by the harness's `run_count`; any
 // other non-pi agent (`mux`) through `mux.sendToPane` when the backend has
-// one (herdr's atomic `agent prompt`), else AgentSendUnsupportedError (tmux:
+// one (Rex's paste), else AgentSendUnsupportedError (tmux:
 // a paste there has nothing to confirm it). No silent fallback: a pi agent
 // whose socket does not answer is an AgentCtlUnreachableError, never a paste.
 //

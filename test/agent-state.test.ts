@@ -18,6 +18,8 @@ import { type MuxBackend, setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { withEnv } from "./_env.js";
 
+const REX = "block:12345678-1234-1234-1234-123456789abc";
+
 const agent: StateAgentRef = { name: "worker-1", workstreamName: "demo", paneId: "%1" };
 const originalPath = process.env.PATH;
 let tempDir: string;
@@ -340,30 +342,30 @@ describe("readAgentStates", () => {
   it("uses a mux backend's native pane status", async () => {
     const backend: MuxBackend = {
       ...tmuxBackend,
-      name: "herdr",
+      name: "rex",
       paneStatus: async () => "needs_permission",
       paneAlive: async () => true,
     };
     setMuxForTests(backend);
 
-    expect((await readAgentStates([{ ...agent, paneId: "w1:p1" }])).get(agentKey(agent))).toEqual({
+    expect((await readAgentStates([{ ...agent, paneId: REX }])).get(agentKey(agent))).toEqual({
       state: "needs_permission",
-      source: "herdr",
+      source: "rex",
       since: null,
       alive: true,
     });
   });
 
-  it("checks pane existence when herdr reports no state", async () => {
+  it("checks pane existence when Rex reports no state", async () => {
     const backend: MuxBackend = {
       ...tmuxBackend,
-      name: "herdr",
+      name: "rex",
       paneStatus: async () => undefined,
       paneAlive: async () => false,
     };
     setMuxForTests(backend);
 
-    expect((await readAgentStates([{ ...agent, paneId: "w1:p1" }])).get(agentKey(agent))).toEqual({
+    expect((await readAgentStates([{ ...agent, paneId: REX }])).get(agentKey(agent))).toEqual({
       state: "unknown",
       source: "none",
       since: null,

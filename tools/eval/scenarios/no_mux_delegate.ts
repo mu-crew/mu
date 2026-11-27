@@ -1,5 +1,5 @@
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
-// Delegates with no multiplexer installed: neither tmux nor herdr is reachable from the caller's
+// Delegates with no multiplexer installed: neither tmux nor Rex is reachable from the caller's
 // pi, its mu shim, or the delegate's pi (setup removes the sandbox's tmux shim; the sandbox PATH is
 // system dirs plus <sandbox>/bin, and setup asserts neither binary resolves there). TMUX, TMUX_PANE,
 // HERDR_ENV and MU_MUX are unset. pi, node and git stay reachable.
@@ -36,10 +36,10 @@ const claimText = (n: number): string =>
     ? `CLAIM claim-${n}: README.md in the repo root starts with the line "# eval repo".`
     : `CLAIM claim-${n}: gate.sh in the repo root is a Python script.`;
 
-/** tmux or herdr on the sandbox PATH, as a path; undefined when neither resolves. */
+/** tmux or Rex on the sandbox PATH, as a path; undefined when neither resolves. */
 function muxOnPath(sb: Sandbox): string | undefined {
   for (const d of (sb.env.PATH ?? "").split(":"))
-    for (const bin of ["tmux", "herdr"])
+    for (const bin of ["tmux", "rex"])
       try {
         accessSync(join(d, bin), constants.X_OK);
         return join(d, bin);
@@ -51,9 +51,9 @@ function muxOnPath(sb: Sandbox): string | undefined {
 
 const scenario: Scenario = {
   id: "no_mux_delegate",
-  title: "independent checks with no tmux or herdr on the machine",
+  title: "independent checks with no tmux or Rex on the machine",
   prompt:
-    "This machine has no tmux and no herdr. Workstream eval has two claims in tasks c1 and c2 (claim-1 and claim-2). Get each claim independently checked (quote the claim, with its claim-N name, in the prompt of its check) with the verdict recorded on its task, then close each task as done if confirmed or rejected if refuted. Work until it is done; do not ask me questions, and do not stop while work is still running.",
+    "This machine has no tmux and no Rex. Workstream eval has two claims in tasks c1 and c2 (claim-1 and claim-2). Get each claim independently checked (quote the claim, with its claim-N name, in the prompt of its check) with the verdict recorded on its task, then close each task as done if confirmed or rejected if refuted. Work until it is done; do not ask me questions, and do not stop while work is still running.",
   timeoutMs: 600_000,
   check: { quietMs: 3000, maxProds: 1 },
   env: { MU_MUX: "", MU_TMUX_SOCKET: "" },

@@ -1,7 +1,7 @@
 // CLI-level tests for `mu agent send`.
 //
-// The non-pi test sends to an agent only herdr can reach (one atomic
-// `agent prompt`), so it runs against a mocked herdr.
+// The non-pi test sends to an agent only Rex can reach (a paste, then
+// Enter), so it runs against a mocked Rex.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +11,7 @@ import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { installMux, type MuxHarness } from "./_mux.js";
+import { installMux, type MuxHarness, REX_PANE, rexSendExecutor } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
 
 let tempDir: string;
@@ -26,7 +26,7 @@ beforeEach(() => {
   db = openDb({ path: dbPath });
   ensureWorkstream(db, "auth");
   // A non-pi CLI: a pi agent would need a control socket (see test/agent-transport.test.ts).
-  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "w1:p1", cli: "claude" });
+  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: REX_PANE, cli: "claude" });
   const seen: string[][] = [];
   calls = seen;
   setSleepForTests(async () => {});
@@ -48,13 +48,15 @@ afterEach(() => {
   delete process.env[key];
 });
 
-describe("mu agent send to a non-pi agent (herdr)", () => {
-  let herdr: MuxHarness;
+describe("mu agent send to a non-pi agent (Rex)", () => {
+  let rex: MuxHarness;
+  const sent: string[] = [];
   beforeEach(() => {
-    herdr = installMux("herdr", [["agent prompt", "{}"]]);
-    calls = herdr.calls;
+    sent.length = 0;
+    rex = installMux("rex", rexSendExecutor(sent));
+    calls = rex.calls;
   });
-  afterEach(() => herdr.restore());
+  afterEach(() => rex.restore());
 
   it("sends through the multiplexer with no staleness field", async () => {
     const { exitCode, data, stderr, error } = await runCliJson<{
@@ -67,7 +69,7 @@ describe("mu agent send to a non-pi agent (herdr)", () => {
     const out = data;
     expect(out.staleness).toBeUndefined();
     expect(out.transport).toBe("mux");
-    expect(calls.map((c) => c.slice(0, 3).join(" "))).toEqual(["agent prompt w1:p1"]);
+    expect(sent).toEqual(["hello"]);
   });
 });
 

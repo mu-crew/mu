@@ -1,7 +1,8 @@
 // mu — advisory spawn refusal for a second managed backend (spec A §8.2).
 //
-// A workstream lives on one backend (tmux, herdr or Rex). A spawn refuses
-// while a registered pane names another one, without probing it for liveness.
+// A workstream lives on one backend (tmux or Rex). A spawn refuses
+// while a registered pane names another one, a retired herdr row included,
+// without probing it for liveness.
 // Advisory: two first spawns can race.
 // A Rex terminal driving tmux workers is fine: only rows count, not the terminal.
 

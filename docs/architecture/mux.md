@@ -1,6 +1,6 @@
 # Mux topology, backends and reconciliation
 
-mu runs agents in multiplexer panes, tmux, herdr or Rex, behind one
+mu runs agents in multiplexer panes, tmux or Rex, behind one
 `MuxBackend` interface. Overview: [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ## One mux session per workstream
@@ -9,15 +9,13 @@ One workstream is one mux session and one `workstream_id` partition in
 `~/.local/state/mu5/mu.db`. Workstreams on one machine are independent
 mux sessions.
 
-| mu term | tmux | herdr | Rex |
-| --- | --- | --- | --- |
-| **mux session** | session | workspace | session |
-| **window** | window | tab | window |
-| **pane** | pane (`%15`) | pane (`w1:p1`) | block (`block:<uuid>`) |
+| mu term | tmux | Rex |
+| --- | --- | --- |
+| **mux session** | session | session |
+| **window** | window | window |
+| **pane** | pane (`%15`) | block (`block:<uuid>`) |
 
-herdr's own "session" is server-level (one socket), which is the wrong
-granularity, so a herdr workspace plays the mux-session role. Rex
-addresses sessions and windows by id; mu finds its own by label and then
+Rex addresses sessions and windows by id; mu finds its own by label and then
 works in ids, and a block call carries the block's session (resolved
 with `target.resolve`), since Rex scopes block lookups to one session.
 
@@ -38,8 +36,7 @@ with `target.resolve`), since Rex scopes block lookups to one session.
 
 - The first `mu agent spawn` creates the session if needed. Name it
   with `mu workstream init <name>`; later verbs pass `-w <name>`.
-- `tmux attach -t mu-<workstream>` shows the whole crew (herdr:
-  `herdr workspace focus <id>`). Killing the session kills the
+- `tmux attach -t mu-<workstream>` shows the whole crew. Killing the session kills the
   workstream, with no leaked panes, and the crew survives a closed
   laptop.
 - `mu agent list` is scoped to one workstream; `-w` picks another.
@@ -57,8 +54,8 @@ borders. The canonical tmux protocol is the comment block at the top of
 
 Every call site reaches its multiplexer through
 `(await activeMux()).<method>()`. Nothing outside `src/mux/` names a
-backend. `src/mux/detect.ts` picks one: `MU_MUX` → `HERDR_ENV` →
-`$TMUX` → `PATH`. An unknown `MU_MUX` value fails the invocation
+backend. `src/mux/detect.ts` picks one: `MU_MUX` →
+`$TMUX` → a Rex terminal → `PATH`. An unknown `MU_MUX` value fails the invocation
 instead of falling back to tmux.
 
 Each call site has decided what "no reachable multiplexer" means:
@@ -78,21 +75,20 @@ The `MuxBackend` surface is `available`, `ensureSession`,
 `killSession`, `spawnAgent`, `listPanes`, `paneAlive`, `killPane`,
 `killPaneCommand` (the argv that kills a pane by hand on the same server, for a
 diagnostic naming a pane mu could not prove gone), `capture`, `attachCommands` and `healthCheck`, plus optional `paneStatus`
-and `sendToPane` (herdr only), `paneResult` (an exited pane's status, for
+(vtmux and Rex) and `sendToPane` (Rex only), `paneResult` (an exited pane's status, for
 remote command gates), `panePid` (tmux: the pane's first process, so a close
-preview leaves the agent's own processes out of the worktree holders), `paneOccupied` (herdr: an agent still occupies the
-pane, which outlives its pi as a shell; what a lost socket's death check reads), `pasteToPane` and `sendKeys` (tmux:
-the `hooks` channel's clear-paste-Enter send and `mu agent answer`'s keys) and `reloadCommands`, and `currentSessionName`
+preview leaves the agent's own processes out of the worktree holders), `pasteToPane` and `sendKeys` (tmux:
+the `hooks` channel's clear-paste-Enter send and `mu agent answer`'s keys), and `currentSessionName`
 (only the suggestion in the missing-`-w` error).
 The mux holds no workstream list: the DB owns it, and `mu-*` sessions
 with no row are not discovered.
 
 Two concerns belong to the backend, because each would otherwise
-hardcode a tmux string a herdr user sees:
+hardcode a tmux string a Rex user sees:
 
 - `attachCommands()`: ordered argv steps that attach to a session, some `optional`
-  with a `reason`. It throws when the target cannot be resolved (herdr:
-  no such workspace). `attachShellLine()` joins the steps into the
+  with a `reason`. It throws when the target cannot be resolved.
+  `attachShellLine()` joins the steps into the
   printed line (`&&` between steps, an optional step as `{ step || true; }`); callers omit the
   line when the call throws.
 - `healthCheck()`: version and env facts as data; `mu doctor` renders.
@@ -104,17 +100,8 @@ hardcode a tmux string a herdr user sees:
 ## Spawn: one backend operation
 
 `mux.spawnAgent` creates the agent's pane (session, window or split as
-needed) and runs the agent in it. tmux does that in one call. herdr has
-no create-and-run form: it makes a bare shell pane, then runs
-`agent start <name> --kind <cli> --pane <id>` with a busy retry, and
-closes the bare pane when the start fails. spawn.ts never sees the two
-halves; it branches on the capability flag `spawnAgentWaitsReady`, not
-on a name:
-
-| | tmux, Rex | herdr |
-| --- | --- | --- |
-| `spawnAgentWaitsReady` | false | true |
-| after `spawnAgent` | mu checks pane life and startup errors | the mux returned once the agent is ready |
+needed) and runs the agent in it, in one call on both backends; mu then
+checks pane life and startup errors.
 
 Rex creates the window or split and starts the command in one
 `session.new_window` / `session.new_split` call, with `focus: false`.
@@ -131,28 +118,21 @@ hold to 0 so it closes on any exit, like a tmux pane.
   ends. After an ok handshake the scan skips shell exec-failure lines
   (`command not found`, `No such file or directory`): pi demonstrably
   started, and a resumed session can show such lines as old tool output.
-- **herdr.** `spawnAgent` returns once herdr detects the agent, which
-  subsumes both checks. A command override (`MU_<CLI>_COMMAND`,
-  `--command`) is refused with `HerdrCommandOverrideError` before herdr
-  is touched.
 - **pi, any backend.** After the agent starts, mu polls its control
   socket until the extension answers (`MU_SPAWN_CTL_MS`, default 30s;
   `--no-ctl` or `0` skips). A timeout is reported but not rolled back:
   the pane and pi are fine, only control is missing. See
   [control-socket.md](control-socket.md).
 
-A backend refuses a command it cannot honour: a dropped command would
-leave an empty shell that mu believes hosts an agent. The refusal and
-every failure before the handshake route through `rollbackSpawn`, so no
+Every failure before the handshake routes through `rollbackSpawn`, so no
 agent row survives for an empty pane.
 
 Spawns serialize per mux session (`src/agents/spawn-lock.ts`, over
 `src/file-lock.ts`) only around the topology check-then-act and the
 row insert. `spawnAgent` reports the pane through `onPaneCreated` the
 moment it exists; spawn.ts finalizes the row and releases the lock
-while herdr's start (up to 30s, beyond the lock's 15s acquire and 30s
-stale budget) and tmux's readiness waits are still running, so a
-parallel fan-out still runs in parallel.
+while the readiness waits are still running, so a parallel fan-out still
+runs in parallel.
 
 ## Reconciliation
 
@@ -161,7 +141,11 @@ returning. `src/reconcile.ts` is the only implementation, and
 `mu doctor` calls the same routine.
 
 1. **Prune ghosts.** Delete each `agents` row whose `pane_id` no longer
-   exists.
+   exists. A row whose pane id names another backend is **foreign** and
+   kept: the active backend cannot list its pane, so absence proves
+   nothing (`src/mux/binding.ts`). That includes the retired herdr: its
+   `w1:p1` rows stay recognised, so reconcile never reaps them as ghosts
+   or reopens their tasks.
 2. **Surface orphans.** List panes in the workstream's session that
    have no row but whose foreground command is a known agent CLI. mu never
    registers them; the user closes the pane or ignores it.
@@ -176,19 +160,17 @@ Runtime state is read on demand and never persisted.
 | Agent | Source |
 | --- | --- |
 | pi (`expectsCtl`) | its control socket, probed in parallel for all pi agents |
-| other CLI on herdr | herdr's native `paneStatus()` |
 | other CLI on Rex | `paneStatus()`: the terminal's OSC 7501 records (`program_status`), only those whose `owner.pid` is the block's own program (a tool the agent runs reports into the same terminal). A blocked record wins (`kind=permission` → `needs_permission`, else `needs_input`), then the root record (`working` → `busy`, at rest → `needs_input`) |
 | other CLI on tmux | murmur: one `list-panes -a` reads `@murmur_pane_state` / `@murmur_pane_since`; agents without a local option fall back to `murmur status --json` (10 s timeout), cached 10s |
 
 - ctl `idle` maps to `needs_input`. murmur maps `working` → `busy`,
   `blocked` → `needs_permission`, and `idle` / `done` / `crashed` →
-  `needs_input`. herdr supplies mu's states directly; Rex's OSC 7501
+  `needs_input`. Rex's OSC 7501
   states map like murmur's (`idle` / `done` / `error` → `needs_input`). See murmur's
   [stable contract](https://github.com/mu-crew/murmur/blob/main/ARCHITECTURE.md#contract).
 - An absent reading is `unknown` with a reason: `ctl missing`,
   `ctl refused`, `murmur not installed`, `murmur pi extension not
   linked`, `murmur hooks not installed`, `murmur has no row`, `murmur
-  status timed out after 10s …`, `remote snapshot stale`, `herdr reports
-  no state`, `rex reports no state`, or `pane gone`.
+  status timed out after 10s …`, `remote snapshot stale`, `rex reports no state`, or `pane gone`.
 - `agents.status` is deprecated. Inserts write `spawning` to satisfy the
   schema; nothing reads it as runtime state.

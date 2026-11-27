@@ -30,7 +30,6 @@ describeIfTmux("spawnAgent tags a real pane", () => {
       name: "w1",
       cli: "pi",
       command: "sleep 60",
-      commandSource: "cli-key",
       env: {},
       paneOptions: { "@mu_agent": "w1", "@mu_workstream": "ws", "@mu_role": "worker" },
     });

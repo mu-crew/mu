@@ -18,7 +18,7 @@ import { ctlSocketPath } from "../src/ctl/path.js";
 import { type Db, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { rmFixtureDir } from "./_fs.js";
-import { installMux, type MuxHarness } from "./_mux.js";
+import { installMux, type MuxHarness, REX_PANE } from "./_mux.js";
 import { type FakeExt, newExt, serveFake } from "./_steer-ext.js";
 
 let dir: string;
@@ -181,10 +181,15 @@ describe("sendViaTransport ctlGuard", () => {
     expect(ext.sends).toHaveLength(0);
   });
 
-  it("a fence on a herdr non-ctl agent refuses and never prompts the pane", async () => {
+  it("a fence on a Rex non-ctl agent refuses and never pastes into the pane", async () => {
     mux.restore();
-    mux = installMux("herdr", async () => ({ stdout: "{}", stderr: "", exitCode: 0 }));
-    const plain = insertAgent(db, { name: "c2", workstream: "auth", paneId: "p2", cli: "claude" });
+    mux = installMux("rex", async () => ({ stdout: "{}", stderr: "", exitCode: 0 }));
+    const plain = insertAgent(db, {
+      name: "c2",
+      workstream: "auth",
+      paneId: REX_PANE,
+      cli: "claude",
+    });
     await expect(
       sendViaTransport(plain, "x", {
         socket: ctlSocketPath("auth", "c2", dir),

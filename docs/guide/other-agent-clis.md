@@ -225,11 +225,10 @@ mu wait task:auth/build
 - **Stalls** mean the owner has read `needs_input` for `--stuck-after` while
   its task is still open. Read the pane (`mu agent read`) before you act. A
   worker queued in muzzle is waiting, never stalled.
-- **On herdr and Rex** a non-pi agent is on the `mux` channel: `--send` and
-  `agent send` work (herdr's `agent prompt`, see
-  [dispatch](dispatch.md#non-pi-agents)), state comes from herdr or the
-  agent's own OSC 7501 report, and abort and `CLOSE:` blocks do not work.
-  herdr refuses `--command`. Stop a turn there with `mu agent close`, and end
+- **On Rex** a non-pi agent is on the `mux` channel: `--send` and
+  `agent send` work (a paste, see [dispatch](dispatch.md#non-pi-agents)),
+  state comes from the agent's own OSC 7501 report, and abort and `CLOSE:`
+  blocks do not work. Stop a turn there with `mu agent close`, and end
   the brief with the worker's own `mu task close`.
 
 ## Run one as the orchestrator

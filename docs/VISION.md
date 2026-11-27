@@ -118,19 +118,19 @@ which task.
 
 ### 5. One workstream per mux session
 
-A workstream is a mux session: a tmux session on tmux, a herdr workspace
-on herdr, a Rex session on Rex. Its agents are panes in that session, so
+A workstream is a mux session: a tmux session on tmux, a Rex session on
+Rex. Its agents are panes in that session, so
 `tmux a -t mu-<workstream>` shows the whole crew. Workstreams on one
 machine are separate sessions, partitioned in the DB by `workstream_id`.
 The crew survives detach and reattach.
 
 The multiplexer is a backend chosen by detection
-(`MU_MUX` → `HERDR_ENV` → `$TMUX` → a Rex terminal → `PATH`).
-Topology, the pane send (herdr's atomic `agent prompt`, Rex's paste, the
+(`MU_MUX` → `$TMUX` → a Rex terminal → `PATH`).
+Topology, the pane send (Rex's paste, the
 tmux paste only the `hooks` channel uses), scrollback capture, pane-id
 validation, and identity fallback live behind `MuxBackend` in `src/mux/`.
-There are three implementations: tmux, herdr and Rex. A fourth needs its
-own friction evidence.
+There are two implementations: tmux and Rex. A third needs its own
+friction evidence (herdr was one, retired in mu 6).
 
 ### 6. Five first-class harnesses, with reported agent state
 
@@ -141,7 +141,6 @@ mu never infers agent state from pane text. Each state source reports it:
 | pi on `ctl` (any backend, local or remote over `ssh -L` or a carrier's forward) | control socket, exact | control socket |
 | claude, codex, cursor-agent, muse on tmux (`hooks`), local; pi on its `MU_PI_CHANNEL=hooks` fallback | clear the input line, paste, then Enter; confirmed by the harness's `run_count`, never resent | murmur's pane inbox, fed by the harness's own hooks |
 | claude, codex, cursor-agent, muse on tmux (`hooks`), `--host` | clear the input line, paste, then Enter; `ack: sent`, confirmed by the next wait or send gate's read of the node | murmur on the node, relayed into the local pane's inbox |
-| other CLI on herdr | mux | herdr |
 | other CLI on Rex | mux (paste, then Enter) | the agent's own OSC 7501 report |
 | other CLI on tmux | none: send refused | murmur |
 
@@ -306,7 +305,7 @@ previous surface on the same scenarios ([reports](eval/README.md)).
 
 ## Key constraints
 
-1. **Agents need a multiplexer** (tmux, herdr or Rex). `mu doctor` reports
+1. **Agents need a multiplexer** (tmux or Rex). `mu doctor` reports
    the backend. Agent verbs exit 5 when none is reachable; task verbs
    and `mu_delegate` (a child pi process) work without one.
 2. **The agent never acknowledges a send.** For pi, the control socket

@@ -435,7 +435,7 @@ describe.each(CONTRACTS)("AgentChannel contract: $label", (c) => {
   });
 });
 
-/** The tmux stub plus a backend `sendToPane` (herdr's and Rex's delivery). */
+/** The tmux stub plus a backend `sendToPane` (Rex's delivery). */
 function sendingMux(): void {
   const backend: MuxBackend = {
     ...tmuxBackend,

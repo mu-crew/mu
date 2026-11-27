@@ -473,20 +473,17 @@ describe("the refusal's way out", () => {
 });
 
 describe("killPaneCommand: each backend's own kill, on the server mu drives", () => {
-  const line = (b: "tmux" | "herdr" | "rex", id: string): string =>
+  const line = (b: "tmux" | "rex", id: string): string =>
     attachShellLine([
       muxByName(b).killPaneCommand(b === "tmux" ? fakePane(id) : { kind: "native", paneId: id }),
     ]);
 
-  it("tmux kill-pane, herdr pane close, rex block close, each with its server selector", async () => {
+  it("tmux kill-pane, rex block close, each with its server selector", async () => {
     await withEnv("MU_TMUX_SOCKET", "priv", async () => {
       const cmd = line("tmux", "%3");
       expect(cmd).toContain("tmux -L priv -f /dev/null if-shell -F");
       expect(cmd).toContain("kill-pane");
       expect(cmd).toContain("%3");
-    });
-    await withEnv("MU_HERDR_SESSION", "s1", async () => {
-      expect(line("herdr", "w1:p2")).toBe("herdr --session s1 pane close w1:p2");
     });
     await withEnv("REX_BIN_DIR", undefined, () =>
       withEnv("MU_REX_SERVER", "/tmp/rx sock", async () => {

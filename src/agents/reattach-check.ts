@@ -126,9 +126,6 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   }
   if (r.reason !== null || r.treePath !== null) return no("reservation", keptDetail(r));
   const mux = await activeMux();
-  if (!mux.runsShellCommand) {
-    return no("carrier", `${mux.name} cannot run the lease attach command in a pane; use tmux`);
-  }
   if (!mux.carrierViews) {
     return no("carrier", new CarrierViewUnsupportedError(r.host, mux.name, "a reattach").message);
   }

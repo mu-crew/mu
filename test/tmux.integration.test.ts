@@ -37,7 +37,6 @@ describeIfTmux("tmux integration (real tmux server)", () => {
       name: window,
       cli: "pi",
       command,
-      commandSource: "cli-key",
       env,
     });
 

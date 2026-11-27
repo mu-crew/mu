@@ -236,14 +236,15 @@ describe("the view proof", () => {
 
   // wire_view_backend_name_is_not_server: a backend name is no server identity.
   it("a server recorded by backend name alone, or on another backend, is unknown", async () => {
-    const herdr = {
+    const rex = {
       ...mux(undefined, []),
-      name: "herdr",
+      name: "rex",
       serverIdentity: undefined,
       paneOnServer: undefined,
     } as never;
-    expect((await proveViewGone(bound("herdr"), herdr)).state).toBe("unknown");
-    expect((await proveViewGone(bound("rex"), herdr)).state).toBe("unknown");
+    expect((await proveViewGone(bound("rex"), rex)).state).toBe("unknown");
+    expect((await proveViewGone(bound("tmux"), rex)).state).toBe("unknown");
+    expect((await proveViewGone(bound("herdr:w1"), rex)).state).toBe("unknown");
     expect((await proveViewGone(bound("rex:i-1"), mux("i-1", []))).state).toBe("unknown");
   });
 

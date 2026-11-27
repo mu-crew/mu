@@ -359,7 +359,6 @@ export {
   HostNotFoundError,
   type HostProfile,
   HostProfileError,
-  HostSpawnUnsupportedError,
   HostTemplateError,
   type HostTemplateScope,
   type HostTemplateValues,

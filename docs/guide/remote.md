@@ -42,8 +42,8 @@ table.
 ## Run one command without an agent
 
 `mu host exec dev -- <cmd>` runs a single command through the host's link
-and returns its exit. No agent, pane or task, so it works on herdr
-too. Details and limits: [remote command](placement.md#remote-command-mu-host-exec).
+and returns its exit. No agent, pane or task, so it works on every
+backend. Details and limits: [remote command](placement.md#remote-command-mu-host-exec).
 
 ## Add a profile and check it
 
@@ -119,8 +119,7 @@ when the task has none, or only the one-line fallback an earlier local spawn pin
   unused and remove it by hand. All DBs sharing the host must run a version
   that checks the marker; older versions ignore its contents.
 - The pane is the connection: closing it, or its death, ends the agent
-  and frees the slot. A session-template pane runs on tmux and Rex; herdr
-  refuses `--host` in one line. Lease and plugin job views need tmux.
+  and frees the slot. A session-template pane runs on tmux and Rex. Lease and plugin job views need tmux.
   A workstream's panes live on one backend: a spawn refuses while a row names
   another ([placement](placement.md#one-backend-per-workstream)).
 - A spawn without `--worktree` refuses (exit 4, `RemotePathOwnedError`) when
