@@ -306,72 +306,75 @@ export function registerDelegateCall(
   opts: RegisterDelegateOptions,
 ): { call: DelegateRow; created: boolean } {
   const state = opts.state ?? "queued";
-  return withOpContext(db, { intent: "delegate.register", actor: opts.caller, group: "new" }, () =>
-    db
-      .transaction(() => {
-        const existing = getDelegateCall(db, opts.callId);
-        if (existing) {
-          const same = (field: string, a: unknown, b: unknown) => {
-            if (canonical(a) !== canonical(b))
-              throw new DelegateCallConflictError(opts.callId, field);
-          };
-          same("caller", existing.caller, opts.caller);
-          same("workstream", existing.workstream, opts.workstream);
-          same("wave", existing.wave, opts.wave ?? null);
-          same(
-            "record target",
-            existing.record
-              ? { workstream: existing.record.workstream, task: existing.record.task }
-              : null,
-            opts.record ?? null,
-          );
-          same("request", existing.request, opts.request);
-          return { call: existing, created: false };
-        }
-        if (opts.record && !getTask(db, opts.record.task, opts.record.workstream))
-          throw new TaskNotFoundError(opts.record.task, opts.record.workstream);
-        const local = taskIdFor(opts.callId, opts.request.label);
-        const headline = (opts.request.label ?? opts.request.text).replace(/\s+/g, " ").trim();
-        addTask(db, {
-          localId: local,
-          workstream: opts.workstream,
-          title: `delegate: ${headline.slice(0, 60)}`,
-          kind: "delegate",
-          ...(opts.wave !== undefined ? { wave: opts.wave } : {}),
-        });
-        addNote(db, local, opts.request.text, {
-          workstream: opts.workstream,
-          kind: "brief",
-          author: opts.caller,
-          group: "inherit",
-        });
-        if (state !== "starting")
-          setTaskStatus(db, local, "OPEN", { workstream: opts.workstream, substate: "parked" });
-        const taskId = (
-          db
-            .prepare(
-              "SELECT t.id AS id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = ? AND t.local_id = ?",
-            )
-            .get(opts.workstream, local) as { id: number }
-        ).id;
-        db.prepare(
-          `INSERT INTO delegate_calls
+  return withOpContext(
+    db,
+    { intent: "delegate.register", actor: opts.caller, workstream: opts.workstream, group: "new" },
+    () =>
+      db
+        .transaction(() => {
+          const existing = getDelegateCall(db, opts.callId);
+          if (existing) {
+            const same = (field: string, a: unknown, b: unknown) => {
+              if (canonical(a) !== canonical(b))
+                throw new DelegateCallConflictError(opts.callId, field);
+            };
+            same("caller", existing.caller, opts.caller);
+            same("workstream", existing.workstream, opts.workstream);
+            same("wave", existing.wave, opts.wave ?? null);
+            same(
+              "record target",
+              existing.record
+                ? { workstream: existing.record.workstream, task: existing.record.task }
+                : null,
+              opts.record ?? null,
+            );
+            same("request", existing.request, opts.request);
+            return { call: existing, created: false };
+          }
+          if (opts.record && !getTask(db, opts.record.task, opts.record.workstream))
+            throw new TaskNotFoundError(opts.record.task, opts.record.workstream);
+          const local = taskIdFor(opts.callId, opts.request.label);
+          const headline = (opts.request.label ?? opts.request.text).replace(/\s+/g, " ").trim();
+          addTask(db, {
+            localId: local,
+            workstream: opts.workstream,
+            title: `delegate: ${headline.slice(0, 60)}`,
+            kind: "delegate",
+            ...(opts.wave !== undefined ? { wave: opts.wave } : {}),
+          });
+          addNote(db, local, opts.request.text, {
+            workstream: opts.workstream,
+            kind: "brief",
+            author: opts.caller,
+            group: "inherit",
+          });
+          if (state !== "starting")
+            setTaskStatus(db, local, "OPEN", { workstream: opts.workstream, substate: "parked" });
+          const taskId = (
+            db
+              .prepare(
+                "SELECT t.id AS id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = ? AND t.local_id = ?",
+              )
+              .get(opts.workstream, local) as { id: number }
+          ).id;
+          db.prepare(
+            `INSERT INTO delegate_calls
                (task_id, caller, call_id, state, record_workstream, record_task, record_label, updated_at, request)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          taskId,
-          opts.caller,
-          opts.callId,
-          state,
-          opts.record?.workstream ?? null,
-          opts.record?.task ?? null,
-          opts.request.label ?? null,
-          now(),
-          canonical(opts.request),
-        );
-        return { call: mustGet(db, opts.callId), created: true };
-      })
-      .immediate(),
+          ).run(
+            taskId,
+            opts.caller,
+            opts.callId,
+            state,
+            opts.record?.workstream ?? null,
+            opts.record?.task ?? null,
+            opts.request.label ?? null,
+            now(),
+            canonical(opts.request),
+          );
+          return { call: mustGet(db, opts.callId), created: true };
+        })
+        .immediate(),
   );
 }
 
@@ -399,25 +402,28 @@ export function markDelegate(
   const row = mustGet(db, callId);
   const from = MOVES[to] ?? [];
   if (!from.includes(row.state)) throw new DelegateStateError(callId, row.state, to);
-  return withOpContext(db, { intent: `delegate.${to}`, actor: row.caller, group: "new" }, () =>
-    db
-      .transaction(() => {
-        const r = db
-          .prepare(
-            `UPDATE delegate_calls
+  return withOpContext(
+    db,
+    { intent: `delegate.${to}`, actor: row.caller, workstream: row.workstream, group: "new" },
+    () =>
+      db
+        .transaction(() => {
+          const r = db
+            .prepare(
+              `UPDATE delegate_calls
                 SET state = ?, updated_at = ?, agent = COALESCE(?, agent),
                     error = CASE WHEN ? = 'refused' THEN COALESCE(?, error) ELSE NULL END
               WHERE call_id = ? AND state = ?`,
-          )
-          .run(to, now(), extra.agent ?? null, to, extra.error ?? null, callId, row.state);
-        if (r.changes !== 1) throw new DelegateStateError(callId, mustGet(db, callId).state, to);
-        if (to === "starting")
-          setTaskStatus(db, row.task, "OPEN", { workstream: row.workstream, substate: "todo" });
-        if (to === "refused")
-          setTaskStatus(db, row.task, "OPEN", { workstream: row.workstream, substate: "parked" });
-        return mustGet(db, callId);
-      })
-      .immediate(),
+            )
+            .run(to, now(), extra.agent ?? null, to, extra.error ?? null, callId, row.state);
+          if (r.changes !== 1) throw new DelegateStateError(callId, mustGet(db, callId).state, to);
+          if (to === "starting")
+            setTaskStatus(db, row.task, "OPEN", { workstream: row.workstream, substate: "todo" });
+          if (to === "refused")
+            setTaskStatus(db, row.task, "OPEN", { workstream: row.workstream, substate: "parked" });
+          return mustGet(db, callId);
+        })
+        .immediate(),
   );
 }
 
@@ -502,64 +508,72 @@ export function finishDelegate(
 
   const wantRecord = opts.record !== false;
   const write = (recordIt: boolean, error?: string): FinishDelegateResult =>
-    withOpContext(db, { intent: "delegate.finish", actor: opts.author, group: "new" }, () =>
-      db
-        .transaction((): FinishDelegateResult => {
-          const cur = mustGet(db, callId);
-          if (isTerminal(cur.state)) return unchanged(cur);
-          if (recordIt && record)
-            addNote(
-              db,
-              record.task,
-              recordNote(label, opts.author, outcome, opts.text, opts.elapsedMs ?? 0),
-              {
-                workstream: record.workstream,
-                kind: "verdict",
+    withOpContext(
+      db,
+      {
+        intent: "delegate.finish",
+        actor: opts.author,
+        workstream: before.workstream,
+        group: "new",
+      },
+      () =>
+        db
+          .transaction((): FinishDelegateResult => {
+            const cur = mustGet(db, callId);
+            if (isTerminal(cur.state)) return unchanged(cur);
+            if (recordIt && record)
+              addNote(
+                db,
+                record.task,
+                recordNote(label, opts.author, outcome, opts.text, opts.elapsedMs ?? 0),
+                {
+                  workstream: record.workstream,
+                  kind: "verdict",
+                  author: opts.author,
+                  group: "inherit",
+                },
+              );
+            const ok = answered && error === undefined;
+            const state: DelegateState = ok ? "done" : cancelled ? "cancelled" : "failed";
+            // The delegate closed its own task first (a pane's close nudge, its own
+            // habit): closeTask's no-op retry would drop the report. Keep it as a
+            // report note; the close below then re-applies the outcome (a delegate's wontfix
+            // becomes done, with a close note) and is not handed the report. A task someone
+            // else closed (the orchestrator, a user) gets no note. The delegate is told
+            // from them by the author of the close note: the call row's `agent`.
+            const selfClosed =
+              cur.agent !== null && closedBy(db, cur.task, cur.workstream) === cur.agent;
+            if (selfClosed)
+              addNote(db, cur.task, report, {
+                workstream: cur.workstream,
+                kind: "report",
                 author: opts.author,
                 group: "inherit",
-              },
-            );
-          const ok = answered && error === undefined;
-          const state: DelegateState = ok ? "done" : cancelled ? "cancelled" : "failed";
-          // The delegate closed its own task first (a pane's close nudge, its own
-          // habit): closeTask's no-op retry would drop the report. Keep it as a
-          // report note; the close below then re-applies the outcome (a delegate's wontfix
-          // becomes done, with a close note) and is not handed the report. A task someone
-          // else closed (the orchestrator, a user) gets no note. The delegate is told
-          // from them by the author of the close note: the call row's `agent`.
-          const selfClosed =
-            cur.agent !== null && closedBy(db, cur.task, cur.workstream) === cur.agent;
-          if (selfClosed)
-            addNote(db, cur.task, report, {
+              });
+            closeTask(db, cur.task, {
               workstream: cur.workstream,
-              kind: "report",
               author: opts.author,
               group: "inherit",
+              ...(selfClosed ? {} : { report }),
+              as: ok ? "done" : cancelled ? "wontfix" : "rejected",
+              ...(ok
+                ? { evidence: `answered ${verdict ?? "with no VERDICT line"} (call ${callId})` }
+                : { why: error ?? `${outcome}: no answer (call ${callId})` }),
             });
-          closeTask(db, cur.task, {
-            workstream: cur.workstream,
-            author: opts.author,
-            group: "inherit",
-            ...(selfClosed ? {} : { report }),
-            as: ok ? "done" : cancelled ? "wontfix" : "rejected",
-            ...(ok
-              ? { evidence: `answered ${verdict ?? "with no VERDICT line"} (call ${callId})` }
-              : { why: error ?? `${outcome}: no answer (call ${callId})` }),
-          });
-          db.prepare(
-            "UPDATE delegate_calls SET state = ?, verdict = ?, error = ?, updated_at = ? WHERE call_id = ?",
-          ).run(state, ok ? verdict : null, error ?? null, now(), callId);
-          return {
-            changed: true,
-            state,
-            task: cur.task,
-            record,
-            recorded: recordIt && record !== null,
-            verdict: ok ? verdict : null,
-            ...(error !== undefined ? { error } : {}),
-          };
-        })
-        .immediate(),
+            db.prepare(
+              "UPDATE delegate_calls SET state = ?, verdict = ?, error = ?, updated_at = ? WHERE call_id = ?",
+            ).run(state, ok ? verdict : null, error ?? null, now(), callId);
+            return {
+              changed: true,
+              state,
+              task: cur.task,
+              record,
+              recorded: recordIt && record !== null,
+              verdict: ok ? verdict : null,
+              ...(error !== undefined ? { error } : {}),
+            };
+          })
+          .immediate(),
     );
 
   try {

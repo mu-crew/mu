@@ -55,6 +55,7 @@ import { activeMux } from "../mux.js";
 import { deleteRecoveryById, selectRemoteRecovery } from "../remote-recovery.js";
 import { assertRemoteWorktreeReleasable, closeRemoteWorktree } from "../remote-worktree.js";
 import { agentRevision, assertRevision } from "../revision.js";
+import { resolveActorIdentity } from "../tasks/claim.js";
 import { callersOwing, dropOwnedRefs } from "../wait-registration.js";
 import {
   assertReleasable,
@@ -501,7 +502,13 @@ async function closeLocked(
     if (unlinkEarly) unlinkCtlSocket(db, name, opts.workstream);
     for (const c of early) releaseLeaseClose(db, c);
     if (early.length > 0) {
-      emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, null, early));
+      emitEvent(
+        db,
+        opts.workstream,
+        "agent.close",
+        closeLine(name, undefined, null, early),
+        await resolveActorIdentity(),
+      );
     }
     const { result, tree } = await closeTreeWithoutRow(
       db,
@@ -531,7 +538,13 @@ async function closeLocked(
     if (closes.length === 0) return result;
     // The early releases were reported before the tree's close.
     if (late.length > 0) {
-      emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, null, late));
+      emitEvent(
+        db,
+        opts.workstream,
+        "agent.close",
+        closeLine(name, undefined, null, late),
+        await resolveActorIdentity(),
+      );
     }
     return { ...result, carrierJobs: closes.map(closedJob) };
   }
@@ -722,6 +735,7 @@ async function closeLocked(
     agent.workstreamName,
     "agent.close",
     closeLine(name, agent.paneId, worktree, closes),
+    await resolveActorIdentity(),
   );
   return {
     killedPane: true,
@@ -779,7 +793,13 @@ async function closeTreeWithoutRow(
     discard: opts.discard === true,
     force: opts.force === true,
   });
-  emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, worktree));
+  emitEvent(
+    db,
+    opts.workstream,
+    "agent.close",
+    closeLine(name, undefined, worktree),
+    await resolveActorIdentity(),
+  );
   return { result: { ...nothing, worktree } };
 }
 

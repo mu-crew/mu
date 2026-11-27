@@ -35,7 +35,12 @@
 
 import { randomUUID } from "node:crypto";
 import { type Db, prepareCached } from "./db.js";
-import { type ActorRole, resolveActorRole, resolveProvenance } from "./provenance.js";
+import {
+  type ActorRole,
+  ORCHESTRATION_INTENTS,
+  resolveActorRole,
+  resolveProvenance,
+} from "./provenance.js";
 
 /** What an op context carries. All fields optional — a partial context
  *  is fine and a null intent is captured as null (fail safe). */
@@ -63,8 +68,10 @@ export interface OpContext {
   actorSession?: string | undefined;
   /** Assistant turn (and tool call) that ran the verb. Unset: inherited, else `resolveProvenance()`. */
   actorAnchor?: string | undefined;
-  /** Capacity the session acts in. Unset: inherited, else `resolveActorRole()` for the intent. */
-  actorRole?: ActorRole | undefined;
+  /** Capacity the session acts in. Unset: inherited or resolved via `resolveActorRole()`. */
+  actorRole?: ActorRole | null | undefined;
+  /** Target workstream of the op (used to resolve `actorRole`). Unset: inherited from outer scope. */
+  workstream?: string | null | undefined;
   /**
    * Op grouping:
    *   - omitted   inherit the enclosing group, or start one if none.
@@ -131,10 +138,25 @@ function writeCtx(db: Db, row: CtxRow): void {
   ).run(row);
 }
 
+const OP_CTX_PROV_COLS = ["actor_session", "actor_anchor", "actor_role"] as const;
+const opCtxColsCache = new WeakMap<Db, Set<string>>();
+
+function opCtxColumns(db: Db): Set<string> {
+  let cols = opCtxColsCache.get(db);
+  if (cols === undefined) {
+    const rows = db.prepare("PRAGMA table_info(op_ctx)").all() as { name: string }[];
+    cols = new Set(rows.map((c) => c.name));
+    opCtxColsCache.set(db, cols);
+  }
+  return cols;
+}
+
 function readCtx(db: Db): CtxRow | undefined {
+  const cols = opCtxColumns(db);
+  const prov = OP_CTX_PROV_COLS.map((c) => (cols.has(c) ? c : `NULL AS ${c}`)).join(", ");
   return prepareCached(
     db,
-    "SELECT group_id, actor, intent, actor_session, actor_anchor, actor_role, applying FROM op_ctx WHERE id = 1",
+    `SELECT group_id, actor, intent, ${prov}, applying FROM op_ctx WHERE id = 1`,
   ).get() as CtxRow | undefined;
 }
 
@@ -253,6 +275,19 @@ const sameCtx = (a: CtxRow, b: CtxRow): boolean =>
   a.actor_role === b.actor_role &&
   a.applying === b.applying;
 
+interface ActiveRoleScope {
+  workstream: string | null;
+  actor: string | null;
+  actorSession: string | null;
+  intent: string | null;
+  role: ActorRole | null;
+}
+
+/** Synchronous nesting stack per Db: lets nested `withOpContext` inherit
+ *  `workstream` and reuse an outer scope's already-resolved `actor_role`
+ *  (even when null) without re-querying SQLite. */
+const activeRoleScopes = new WeakMap<Db, ActiveRoleScope[]>();
+
 /**
  * Run `fn` with the given op context applied; see `withCtxRow` for the
  * transaction it owns and how the context is restored.
@@ -264,44 +299,77 @@ const sameCtx = (a: CtxRow, b: CtxRow): boolean =>
  * makes both unrepresentable.
  */
 export function withOpContext<T>(db: Db, ctx: OpContext, fn: () => T): T {
-  return withCtxRow(
-    db,
-    (previous) => {
-      const groupId =
-        ctx.group === "new"
-          ? randomUUID()
-          : ctx.group !== undefined
-            ? ctx.group
-            : (previous.group_id ?? randomUUID());
-      // Provenance: explicit, else inherited, else the process env. Read only when
-      // nothing set it yet, so a nested scope costs no file read.
-      const needProvenance =
-        ctx.actorSession === undefined &&
-        ctx.actorAnchor === undefined &&
-        (previous.actor_session === null || previous.actor_anchor === null);
-      const env = needProvenance ? resolveProvenance() : undefined;
-      const intent =
-        ctx.intent !== undefined ? ctx.intent : (previous.intent ?? ctx.intentIfUnset ?? null);
-      // Role: explicit, else inherited (a nested scope is part of the outer
-      // action), else resolved for this intent. Suppressed capture stamps nothing,
-      // so ingest's per-op scopes skip the lookup.
-      const role =
-        ctx.actorRole ??
-        previous.actor_role ??
-        (previous.applying ? null : resolveActorRole(db, intent));
-      return {
-        group_id: groupId,
-        actor_session: ctx.actorSession ?? previous.actor_session ?? env?.actorSession ?? null,
-        actor_anchor: ctx.actorAnchor ?? previous.actor_anchor ?? env?.actorAnchor ?? null,
+  let stack = activeRoleScopes.get(db);
+  if (stack === undefined) {
+    stack = [];
+    activeRoleScopes.set(db, stack);
+  }
+  let pushed = false;
+  try {
+    return withCtxRow(
+      db,
+      (previous) => {
+        const outer = stack.at(-1);
+        const groupId =
+          ctx.group === "new"
+            ? randomUUID()
+            : ctx.group !== undefined
+              ? ctx.group
+              : (previous.group_id ?? randomUUID());
+        // Provenance: explicit, else inherited, else the process env. Read only when
+        // nothing set it yet, so a nested scope costs no file read.
+        const needProvenance =
+          ctx.actorSession === undefined &&
+          ctx.actorAnchor === undefined &&
+          (previous.actor_session === null || previous.actor_anchor === null);
+        const env = needProvenance ? resolveProvenance() : undefined;
+        const actorSession =
+          ctx.actorSession ?? previous.actor_session ?? env?.actorSession ?? null;
+        const actorAnchor = ctx.actorAnchor ?? previous.actor_anchor ?? env?.actorAnchor ?? null;
         // An explicit undefined inherits; only a provided value overrides.
-        actor: ctx.actor !== undefined ? ctx.actor : previous.actor,
-        intent,
-        actor_role: role,
-        applying: previous.applying,
-      };
-    },
-    fn,
-  );
+        const actor = ctx.actor !== undefined ? ctx.actor : previous.actor;
+        const intent =
+          ctx.intent !== undefined ? ctx.intent : (previous.intent ?? ctx.intentIfUnset ?? null);
+        const workstream =
+          ctx.workstream !== undefined ? ctx.workstream : (outer?.workstream ?? null);
+        // Role: explicit wins; suppressed capture stamps nothing; a nested scope
+        // with the same (workstream, actor, actorSession) reuses the outer role
+        // without re-querying unless an inner orchestration intent could promote null.
+        let role: ActorRole | null;
+        if (ctx.actorRole !== undefined) {
+          role = ctx.actorRole;
+        } else if (previous.applying) {
+          role = null;
+        } else if (
+          outer !== undefined &&
+          outer.workstream === workstream &&
+          outer.actor === actor &&
+          outer.actorSession === actorSession &&
+          (outer.role !== null ||
+            outer.intent === intent ||
+            !(intent !== null && ORCHESTRATION_INTENTS.has(intent)))
+        ) {
+          role = outer.role;
+        } else {
+          role = resolveActorRole(db, { intent, workstream, actor, actorSession });
+        }
+        stack.push({ workstream, actor, actorSession, intent, role });
+        pushed = true;
+        return {
+          group_id: groupId,
+          actor_session: actorSession,
+          actor_anchor: actorAnchor,
+          actor,
+          intent,
+          actor_role: role,
+          applying: previous.applying,
+        };
+      },
+      fn,
+    );
+  } finally {
+    if (pushed) stack.pop();
+  }
 }
 
 /**

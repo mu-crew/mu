@@ -680,7 +680,7 @@ function deleteAgentRow(
   // intent=NULL typed ops (measured), unrenderable by the one formatter
   // v2-log-verb builds — the same defect as the prose events, in the
   // other direction.
-  return withOpContext(db, { intent: "task.reap", actor: "reaper", group: "new" }, () =>
+  return withOpContext(db, { intent: "task.reap", actor: "reaper", workstream, group: "new" }, () =>
     db
       .transaction(() => {
         // Snapshot the stuck tasks BEFORE the DELETE; the FK CASCADE

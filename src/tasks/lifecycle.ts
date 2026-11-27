@@ -118,8 +118,10 @@ export function setTaskStatus(
   // `intentIfUnset` (not `intent`): when reached via closeTask, the
   // outer verb is the label the operator recognises, so it must win.
   // Only a direct setTaskStatus call labels itself.
-  return withOpContext(db, { intentIfUnset: `task.set-${status.toLowerCase()}` }, () =>
-    setTaskStatusImpl(db, localId, status, opts),
+  return withOpContext(
+    db,
+    { intentIfUnset: `task.set-${status.toLowerCase()}`, workstream: opts.workstream },
+    () => setTaskStatusImpl(db, localId, status, opts),
   );
 }
 
@@ -315,8 +317,10 @@ export function closeTask(
   if (as !== "done" && (opts.why === undefined || opts.why.trim() === "")) {
     throw new SubstateReasonRequiredError("close", as, localId);
   }
-  return withOpContext(db, writerContext(db, "task.close", opts.author, opts.group), () =>
-    closeTaskImpl(db, localId, opts),
+  return withOpContext(
+    db,
+    writerContext(db, "task.close", opts.author, opts.group, opts.workstream),
+    () => closeTaskImpl(db, localId, opts),
   );
 }
 
@@ -530,15 +534,19 @@ export function openTask(
   localId: string,
   opts: AttributedEvidence & { workstream: string },
 ): SetStatusResult {
-  return withOpContext(db, { intent: "task.open", actor: opts.author, group: "new" }, () => {
-    const before = getTask(db, localId, opts.workstream);
-    const r = setTaskStatus(db, localId, "OPEN", {
-      workstream: opts.workstream,
-      ...(opts.evidence !== undefined ? { evidence: opts.evidence } : {}),
-    });
-    if (r.changed && before) recordEvidenceNote(db, localId, before.workstreamName, "OPEN", opts);
-    return r;
-  });
+  return withOpContext(
+    db,
+    { intent: "task.open", actor: opts.author, workstream: opts.workstream, group: "new" },
+    () => {
+      const before = getTask(db, localId, opts.workstream);
+      const r = setTaskStatus(db, localId, "OPEN", {
+        workstream: opts.workstream,
+        ...(opts.evidence !== undefined ? { evidence: opts.evidence } : {}),
+      });
+      if (r.changed && before) recordEvidenceNote(db, localId, before.workstreamName, "OPEN", opts);
+      return r;
+    },
+  );
 }
 
 export interface ParkTaskOptions extends EvidenceOption {
@@ -557,25 +565,28 @@ export interface ParkTaskOptions extends EvidenceOption {
  */
 export function parkTask(db: Db, localId: string, opts: ParkTaskOptions): SetStatusResult {
   if (opts.why.trim() === "") throw new SubstateReasonRequiredError("park", "parked", localId);
-  return withOpContext(db, { intent: "task.park", actor: opts.author, group: "new" }, () =>
-    db
-      .transaction((): SetStatusResult => {
-        const before = getTask(db, localId, opts.workstream);
-        if (!before) throw new TaskNotFoundError(localId, opts.workstream);
-        if (before.status !== "OPEN") {
-          throw new TaskParkStateError(localId, before.status, before.workstreamName);
-        }
-        const r = setTaskStatus(db, localId, "OPEN", {
-          workstream: opts.workstream,
-          substate: "parked",
-        });
-        if (r.changed) {
-          recordReasonNote(db, localId, before.workstreamName, "parked", opts.why, opts.author);
-          recordEvidenceNote(db, localId, before.workstreamName, "PARK", opts);
-        }
-        return r;
-      })
-      .immediate(),
+  return withOpContext(
+    db,
+    { intent: "task.park", actor: opts.author, workstream: opts.workstream, group: "new" },
+    () =>
+      db
+        .transaction((): SetStatusResult => {
+          const before = getTask(db, localId, opts.workstream);
+          if (!before) throw new TaskNotFoundError(localId, opts.workstream);
+          if (before.status !== "OPEN") {
+            throw new TaskParkStateError(localId, before.status, before.workstreamName);
+          }
+          const r = setTaskStatus(db, localId, "OPEN", {
+            workstream: opts.workstream,
+            substate: "parked",
+          });
+          if (r.changed) {
+            recordReasonNote(db, localId, before.workstreamName, "parked", opts.why, opts.author);
+            recordEvidenceNote(db, localId, before.workstreamName, "PARK", opts);
+          }
+          return r;
+        })
+        .immediate(),
   );
 }
 
@@ -589,25 +600,28 @@ export function acceptTask(
   localId: string,
   opts: AttributedEvidence & { workstream: string },
 ): SetStatusResult {
-  return withOpContext(db, { intent: "task.accept", actor: opts.author, group: "new" }, () =>
-    db
-      .transaction((): SetStatusResult => {
-        const before = getTask(db, localId, opts.workstream);
-        if (!before) throw new TaskNotFoundError(localId, opts.workstream);
-        if (before.status !== "OPEN" || before.substate !== "triage") {
-          return {
-            previousStatus: before.status,
-            status: before.status,
-            previousSubstate: before.substate,
-            substate: before.substate,
-            changed: false,
-          };
-        }
-        const r = setTaskStatus(db, localId, "OPEN", { workstream: opts.workstream });
-        recordEvidenceNote(db, localId, before.workstreamName, "ACCEPT", opts);
-        return r;
-      })
-      .immediate(),
+  return withOpContext(
+    db,
+    { intent: "task.accept", actor: opts.author, workstream: opts.workstream, group: "new" },
+    () =>
+      db
+        .transaction((): SetStatusResult => {
+          const before = getTask(db, localId, opts.workstream);
+          if (!before) throw new TaskNotFoundError(localId, opts.workstream);
+          if (before.status !== "OPEN" || before.substate !== "triage") {
+            return {
+              previousStatus: before.status,
+              status: before.status,
+              previousSubstate: before.substate,
+              substate: before.substate,
+              changed: false,
+            };
+          }
+          const r = setTaskStatus(db, localId, "OPEN", { workstream: opts.workstream });
+          recordEvidenceNote(db, localId, before.workstreamName, "ACCEPT", opts);
+          return r;
+        })
+        .immediate(),
   );
 }
 
@@ -617,26 +631,29 @@ export function unparkTask(
   localId: string,
   opts: AttributedEvidence & { workstream: string },
 ): SetStatusResult {
-  return withOpContext(db, { intent: "task.unpark", actor: opts.author, group: "new" }, () =>
-    db
-      .transaction((): SetStatusResult => {
-        const before = getTask(db, localId, opts.workstream);
-        if (!before) throw new TaskNotFoundError(localId, opts.workstream);
-        if (before.kind === "human")
-          throw new HumanTaskError(before.name, before.workstreamName, "unpark");
-        if (before.status !== "OPEN" || before.substate !== "parked") {
-          return {
-            previousStatus: before.status,
-            status: before.status,
-            previousSubstate: before.substate,
-            substate: before.substate,
-            changed: false,
-          };
-        }
-        const r = setTaskStatus(db, localId, "OPEN", { workstream: opts.workstream });
-        recordEvidenceNote(db, localId, before.workstreamName, "UNPARK", opts);
-        return r;
-      })
-      .immediate(),
+  return withOpContext(
+    db,
+    { intent: "task.unpark", actor: opts.author, workstream: opts.workstream, group: "new" },
+    () =>
+      db
+        .transaction((): SetStatusResult => {
+          const before = getTask(db, localId, opts.workstream);
+          if (!before) throw new TaskNotFoundError(localId, opts.workstream);
+          if (before.kind === "human")
+            throw new HumanTaskError(before.name, before.workstreamName, "unpark");
+          if (before.status !== "OPEN" || before.substate !== "parked") {
+            return {
+              previousStatus: before.status,
+              status: before.status,
+              previousSubstate: before.substate,
+              substate: before.substate,
+              changed: false,
+            };
+          }
+          const r = setTaskStatus(db, localId, "OPEN", { workstream: opts.workstream });
+          recordEvidenceNote(db, localId, before.workstreamName, "UNPARK", opts);
+          return r;
+        })
+        .immediate(),
   );
 }

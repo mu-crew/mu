@@ -210,7 +210,12 @@ export function authorizeTasks(
   }
   return withOpContext(
     db,
-    { intent: opts.off ? "task.auto-off" : "task.auto", actor: opts.actor, group: "new" },
+    {
+      intent: opts.off ? "task.auto-off" : "task.auto",
+      actor: opts.actor,
+      workstream: ws,
+      group: "new",
+    },
     () => {
       const me = localMachineId(db);
       const selected = [...ids];

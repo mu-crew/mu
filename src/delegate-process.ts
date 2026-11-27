@@ -379,6 +379,7 @@ export async function runDelegateProcess(
           stdio: ["pipe", logFd, logFd],
           env: delegateChildEnv(process.env, {
             MU_MANAGED_AGENT: "1",
+            MU_DELEGATE: "1",
             MU_AGENT_NAME: call.task,
             MU_WORKSTREAM: call.workstream,
             MU_AGENT_CLI: "pi",

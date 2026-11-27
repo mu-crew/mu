@@ -38,6 +38,7 @@ import {
   assertRemoteWorktreeReleasable,
   closeRemoteWorktree,
 } from "../remote-worktree.js";
+import { resolveActorIdentity } from "../tasks/claim.js";
 import type { CloseAgentResult, ClosePreview } from "./close.js";
 
 /** Why a close of `rec` would refuse right now, from the registry and the profile alone (no host command); null when it would go on. */
@@ -95,6 +96,7 @@ export async function closeRecovery(
       rec.workstream,
       "agent.close",
       `agent close ${rec.name} (recovery ${rec.agentId}, worktree gone: host ${rec.host} is lost)`,
+      await resolveActorIdentity(),
     );
     return {
       killedPane: false,
@@ -151,7 +153,13 @@ export async function closeRecovery(
   if (!deleted) assertRecoveryUnchanged(db, rec);
   const bits = [`recovery ${rec.agentId}`, `worktree ${worktree.action}`];
   if (worktree.branch !== undefined) bits.push(`as ${worktree.branch}`);
-  emitEvent(db, rec.workstream, "agent.close", `agent close ${rec.name} (${bits.join(", ")})`);
+  emitEvent(
+    db,
+    rec.workstream,
+    "agent.close",
+    `agent close ${rec.name} (${bits.join(", ")})`,
+    await resolveActorIdentity(),
+  );
   return {
     killedPane: false,
     deletedRow: false,

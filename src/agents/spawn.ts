@@ -888,6 +888,7 @@ async function spawnPreparedAgent(
                 MU_REMOTE: "",
                 MU_REMOTE_KEY: "",
                 MU_ORCHESTRATOR: "",
+                MU_DELEGATE: "",
                 MU_PI_CHANNEL: "",
                 ...paneEnv,
                 MU_MUX: "rex",
@@ -1237,7 +1238,13 @@ async function prestageLocked(
       path,
     });
     for (const w of reclaimed) {
-      emitEvent(db, opts.workstream, "agent.spawn", `agent spawn ${opts.name}: reused path: ${w}`);
+      emitEvent(
+        db,
+        opts.workstream,
+        "agent.spawn",
+        `agent spawn ${opts.name}: reused path: ${w}`,
+        await resolveActorIdentity(),
+      );
     }
     creating = true; // from here anything at `path` is this staging's
     const { base } = await createWorktree({ root, path, from, signal: opts.signal });

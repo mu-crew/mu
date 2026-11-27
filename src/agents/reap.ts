@@ -81,6 +81,7 @@ export function reapAgentRow(
       pane.ws,
       "agent.send",
       `delivery outcome lost with agent ${name}: ${lost.map((e) => `${e.method} ${e.key}`).join(", ")} (never confirmed; a late result is found by its key)`,
+      "reaper",
     );
   }
   const reopen = db.prepare(
@@ -97,7 +98,7 @@ export function reapAgentRow(
         ? `[reaper] previous owner ${name} gone (agent removed); status reverted IN_PROGRESS → OPEN, owner cleared`
         : `[reaper] previous owner ${name} gone (pane died); its ${lease.job === null ? "job (no handle recorded yet)" : `lease job ${lease.job}`} on ${lease.host} may still run, so the task is parked: resume with ${resumeHint(name, pane.ws, t.localId, t.ws, lease.plugin !== null)}`;
     // The note keeps its own intent (as `addNote` gave it) inside the caller's group.
-    withOpContext(db, { intent: "task.note", actor: "reaper" }, () =>
+    withOpContext(db, { intent: "task.note", actor: "reaper", workstream: t.ws }, () =>
       note.run(t.taskId, content, now),
     );
   }

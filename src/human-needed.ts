@@ -57,34 +57,37 @@ export function recordHumanNeeded(
       "human-needed: no caller identity (run inside a mu agent or a pi session)",
     );
   }
-  return withOpContext(db, { intent: "task.note", actor: caller, group: "new" }, () =>
-    db
-      .transaction(() => {
-        if (opts.stop === false) {
-          const same = openItemWith(db, opts.workstream, reason);
-          if (same !== undefined) return { id: same, changed: false };
-          return { id: addHumanTask(db, opts.workstream, caller, reason), changed: true };
-        }
-        const open = openNeedFor(db, caller, opts.workstream);
-        if (open !== undefined) {
-          if (open.briefs.includes(reason)) return { id: open.id, changed: false };
-          insertNote(db, open.id, reason, {
-            workstream: opts.workstream,
-            author: caller,
-            kind: "brief",
-          });
-          return { id: open.id, changed: true, extended: true };
-        }
-        const id = addHumanTask(db, opts.workstream, caller, reason);
-        const taskId = (
-          db
-            .prepare("SELECT id FROM tasks WHERE workstream_id = ? AND local_id = ?")
-            .get(resolveWorkstreamId(db, opts.workstream), id) as { id: number }
-        ).id;
-        db.prepare("INSERT INTO human_needs (task_id, caller) VALUES (?, ?)").run(taskId, caller);
-        return { id, changed: true };
-      })
-      .immediate(),
+  return withOpContext(
+    db,
+    { intent: "task.note", actor: caller, workstream: opts.workstream, group: "new" },
+    () =>
+      db
+        .transaction(() => {
+          if (opts.stop === false) {
+            const same = openItemWith(db, opts.workstream, reason);
+            if (same !== undefined) return { id: same, changed: false };
+            return { id: addHumanTask(db, opts.workstream, caller, reason), changed: true };
+          }
+          const open = openNeedFor(db, caller, opts.workstream);
+          if (open !== undefined) {
+            if (open.briefs.includes(reason)) return { id: open.id, changed: false };
+            insertNote(db, open.id, reason, {
+              workstream: opts.workstream,
+              author: caller,
+              kind: "brief",
+            });
+            return { id: open.id, changed: true, extended: true };
+          }
+          const id = addHumanTask(db, opts.workstream, caller, reason);
+          const taskId = (
+            db
+              .prepare("SELECT id FROM tasks WHERE workstream_id = ? AND local_id = ?")
+              .get(resolveWorkstreamId(db, opts.workstream), id) as { id: number }
+          ).id;
+          db.prepare("INSERT INTO human_needs (task_id, caller) VALUES (?, ?)").run(taskId, caller);
+          return { id, changed: true };
+        })
+        .immediate(),
   );
 }
 

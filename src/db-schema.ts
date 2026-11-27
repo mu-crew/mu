@@ -503,7 +503,7 @@ CREATE TABLE IF NOT EXISTS op_ctx (
   now_ms   INTEGER NOT NULL DEFAULT 0,
   actor_session TEXT,  -- provenance (src/provenance.ts); also in ADDED_COLUMNS
   actor_anchor  TEXT,
-  actor_role    TEXT   -- 'orchestrator' | 'worker' | NULL (src/provenance.ts resolveActorRole)
+  actor_role    TEXT   -- 'orchestrator' | 'worker' | 'delegate' | NULL (src/provenance.ts resolveActorRole)
 );
 
 -- op_dying: natural keys of workstream/task rows mid-DELETE, so cascaded

@@ -259,7 +259,7 @@ export function sweepRevision(members: ReadonlyMap<string, number>): number {
  */
 export function ensureWorkstream(db: Db, name: string): boolean {
   assertValidWorkstreamName(name);
-  return withOpContext(db, { intent: "workstream.init", group: "new" }, () =>
+  return withOpContext(db, { intent: "workstream.init", workstream: name, group: "new" }, () =>
     ensureWorkstreamImpl(db, name),
   );
 }
@@ -654,22 +654,25 @@ export async function teardownWorkstream(
   // an earlier one was being killed, a racing spawn) aborts the commit
   // instead of being swept up unseen.
   const tornDownAt = new Date().toISOString();
-  withOpContext(db, { intent: "workstream.teardown", group: "new" }, () =>
-    db
-      .transaction(() => {
-        checkTeardownRevision(db, opts);
-        // Each dead row goes through THE reaper step (src/agents/reap.ts), in
-        // this transaction and group: its remote worktree is recorded and
-        // what it owned reopens, exactly as a pane that died on its own.
-        for (const a of dead) {
-          if (!sameRow.get(a.incarnation, a.name, a.paneId, opts.workstream)) continue;
-          reapAgentRow(db, a.incarnation, a.name);
-        }
-        db.prepare(
-          "UPDATE workstreams SET torn_down_at = ? WHERE name = ? AND torn_down_at IS NULL",
-        ).run(tornDownAt, opts.workstream);
-      })
-      .immediate(),
+  withOpContext(
+    db,
+    { intent: "workstream.teardown", workstream: opts.workstream, group: "new" },
+    () =>
+      db
+        .transaction(() => {
+          checkTeardownRevision(db, opts);
+          // Each dead row goes through THE reaper step (src/agents/reap.ts), in
+          // this transaction and group: its remote worktree is recorded and
+          // what it owned reopens, exactly as a pane that died on its own.
+          for (const a of dead) {
+            if (!sameRow.get(a.incarnation, a.name, a.paneId, opts.workstream)) continue;
+            reapAgentRow(db, a.incarnation, a.name);
+          }
+          db.prepare(
+            "UPDATE workstreams SET torn_down_at = ? WHERE name = ? AND torn_down_at IS NULL",
+          ).run(tornDownAt, opts.workstream);
+        })
+        .immediate(),
   );
   // No emitEvent: the UPDATE fired the capture trigger (op='put',
   // intent='workstream.teardown', payload {torn_down_at}).
@@ -729,7 +732,7 @@ export async function reinitWorkstream(
       throw new WorkstreamSessionLiveError(name, muxSession);
     }
   }
-  withOpContext(db, { intent: "workstream.init", group: "new" }, () =>
+  withOpContext(db, { intent: "workstream.init", workstream: name, group: "new" }, () =>
     db
       .transaction(() => {
         if (tornDownAtOf(db, name) === null) return;

@@ -60,7 +60,9 @@ export interface AddTaskOptions {
  * called here so the same primitive is exercised by tests.
  */
 export function addTask(db: Db, opts: AddTaskOptions) {
-  return withOpContext(db, { intent: "task.add", group: "new" }, () => addTaskImpl(db, opts));
+  return withOpContext(db, { intent: "task.add", workstream: opts.workstream, group: "new" }, () =>
+    addTaskImpl(db, opts),
+  );
 }
 
 function addTaskImpl(db: Db, opts: AddTaskOptions) {
@@ -185,42 +187,45 @@ export function addTasks(
   opts: AddTasksOptions,
 ): AddTasksResult {
   if (input.length === 0) return { ids: [], derived: [], changed: false };
-  return withOpContext(db, { intent: "task.add", actor: opts.noteAuthor, group: "new" }, () =>
-    db
-      .transaction((): AddTasksResult => {
-        const explicit = new Set(input.flatMap((t) => (t.id !== undefined ? [t.id] : [])));
-        const done: { id: string }[] = [];
-        const derived: IdFromTitleResult[] = [];
-        for (const entry of input) {
-          const d: IdFromTitleResult =
-            entry.id !== undefined
-              ? { id: entry.id, truncated: false, originalSlug: entry.id }
-              : idFromTitleVerbose(db, opts.workstream, entry.title, explicit);
-          derived.push(d);
-          const t = { ...entry, id: d.id };
-          done.push(t);
-          addTaskImpl(db, {
-            localId: t.id,
-            workstream: opts.workstream,
-            title: t.title,
-            ...(opts.blockedBy !== undefined ? { blockedBy: [...opts.blockedBy] } : {}),
-            ...(opts.triage === true ? { triage: true } : {}),
-            ...(opts.kind !== undefined ? { kind: opts.kind } : {}),
-            ...(opts.impact !== undefined ? { impact: opts.impact } : {}),
-            ...(opts.effortDays !== undefined ? { effortDays: opts.effortDays } : {}),
-          });
-          if (t.note !== undefined) {
-            const noteOpts: AddNoteOptions = { workstream: opts.workstream, kind: "brief" };
-            if (opts.noteAuthor !== undefined) noteOpts.author = opts.noteAuthor;
-            insertNote(db, t.id, t.note, noteOpts, false);
+  return withOpContext(
+    db,
+    { intent: "task.add", actor: opts.noteAuthor, workstream: opts.workstream, group: "new" },
+    () =>
+      db
+        .transaction((): AddTasksResult => {
+          const explicit = new Set(input.flatMap((t) => (t.id !== undefined ? [t.id] : [])));
+          const done: { id: string }[] = [];
+          const derived: IdFromTitleResult[] = [];
+          for (const entry of input) {
+            const d: IdFromTitleResult =
+              entry.id !== undefined
+                ? { id: entry.id, truncated: false, originalSlug: entry.id }
+                : idFromTitleVerbose(db, opts.workstream, entry.title, explicit);
+            derived.push(d);
+            const t = { ...entry, id: d.id };
+            done.push(t);
+            addTaskImpl(db, {
+              localId: t.id,
+              workstream: opts.workstream,
+              title: t.title,
+              ...(opts.blockedBy !== undefined ? { blockedBy: [...opts.blockedBy] } : {}),
+              ...(opts.triage === true ? { triage: true } : {}),
+              ...(opts.kind !== undefined ? { kind: opts.kind } : {}),
+              ...(opts.impact !== undefined ? { impact: opts.impact } : {}),
+              ...(opts.effortDays !== undefined ? { effortDays: opts.effortDays } : {}),
+            });
+            if (t.note !== undefined) {
+              const noteOpts: AddNoteOptions = { workstream: opts.workstream, kind: "brief" };
+              if (opts.noteAuthor !== undefined) noteOpts.author = opts.noteAuthor;
+              insertNote(db, t.id, t.note, noteOpts, false);
+            }
           }
-        }
-        if (opts.blocks !== undefined && opts.blocks.length > 0) {
-          addBlocksEdges(db, done, opts.blocks, opts.workstream);
-        }
-        return { ids: done.map((t) => t.id), derived, changed: true };
-      })
-      .immediate(),
+          if (opts.blocks !== undefined && opts.blocks.length > 0) {
+            addBlocksEdges(db, done, opts.blocks, opts.workstream);
+          }
+          return { ids: done.map((t) => t.id), derived, changed: true };
+        })
+        .immediate(),
   );
 }
 
@@ -321,9 +326,21 @@ export function writerContext(
   intent: string,
   actor: string | undefined,
   group: "new" | "inherit" | undefined,
-): { intent?: string; intentIfUnset?: string; actor: string | undefined; group?: "new" } {
-  if (group !== "inherit") return { intent, actor, group: "new" };
-  return { intentIfUnset: intent, actor: currentOpContext(db).actor ?? actor };
+  workstream?: string,
+): {
+  intent?: string;
+  intentIfUnset?: string;
+  actor: string | undefined;
+  workstream?: string;
+  group?: "new";
+} {
+  if (group !== "inherit")
+    return { intent, actor, ...(workstream !== undefined ? { workstream } : {}), group: "new" };
+  return {
+    intentIfUnset: intent,
+    actor: currentOpContext(db).actor ?? actor,
+    ...(workstream !== undefined ? { workstream } : {}),
+  };
 }
 
 export function addNote(
@@ -332,8 +349,10 @@ export function addNote(
   content: string,
   opts: AddNoteOptions,
 ): AddNoteResult {
-  return withOpContext(db, writerContext(db, "task.note", opts.author, opts.group), () =>
-    insertNote(db, taskLocalId, content, opts),
+  return withOpContext(
+    db,
+    writerContext(db, "task.note", opts.author, opts.group, opts.workstream),
+    () => insertNote(db, taskLocalId, content, opts),
   );
 }
 
@@ -441,7 +460,7 @@ export function deleteTask(
   workstream: string,
   opts: DeleteTaskOptions = {},
 ): DeleteTaskResult {
-  return withOpContext(db, { intent: "task.delete", group: "new" }, () =>
+  return withOpContext(db, { intent: "task.delete", workstream, group: "new" }, () =>
     deleteTaskImpl(db, localId, workstream, opts),
   );
 }
@@ -558,8 +577,10 @@ export function updateTask(
   opts: UpdateTaskOptions,
   scope: UpdateTaskScopeOption,
 ): UpdateTaskResult {
-  return withOpContext(db, { intent: "task.update", group: "new" }, () =>
-    updateTaskImpl(db, localId, opts, scope),
+  return withOpContext(
+    db,
+    { intent: "task.update", workstream: scope.workstream, group: "new" },
+    () => updateTaskImpl(db, localId, opts, scope),
   );
 }
 

@@ -499,8 +499,10 @@ export {
   type ActorRole,
   ORCHESTRATION_INTENTS,
   type Provenance,
+  type ResolveActorRoleInput,
   resolveActorRole,
   resolveProvenance,
+  SYSTEM_ACTORS,
 } from "./provenance.js";
 export {
   type MachineLocalLoss,

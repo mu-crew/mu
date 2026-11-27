@@ -256,8 +256,10 @@ export async function releaseStall(
 ): Promise<StallActionResult> {
   const callers = opts.callers ?? currentCallers();
   try {
-    return withOpContext(db, { intent: "task.release", actor: ctx.caller, group: "new" }, () =>
-      releaseBody(db, ctx, callers),
+    return withOpContext(
+      db,
+      { intent: "task.release", actor: ctx.caller, workstream: ctx.ref.workstream, group: "new" },
+      () => releaseBody(db, ctx, callers),
     );
   } catch (e) {
     // The transaction rolled back: nothing was written.

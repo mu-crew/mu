@@ -55,7 +55,7 @@ export interface LogRow {
   actorSession: string | null;
   /** Assistant turn (`<entry id>[:<toolCallId>]`) that ran the verb, or null. */
   actorAnchor: string | null;
-  /** Capacity the session acted in ('orchestrator' | 'worker'), or null when
+  /** Capacity the session acted in ('orchestrator' | 'worker' | 'delegate'), or null when
    *  unknown or the DB predates the column (src/provenance.ts resolveActorRole). */
   actorRole: ActorRole | null;
   /** ISO 8601 timestamp set at insert time. */
@@ -394,7 +394,12 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
   const key = opts.workstream ?? MACHINE_WIDE_KEY;
   const group = randomUUID();
   const prov = resolveProvenance();
-  const role = resolveActorRole(db, opts.intent ?? null);
+  const role = resolveActorRole(db, {
+    intent: opts.intent ?? null,
+    workstream: opts.workstream,
+    actor: opts.source,
+    actorSession: prov.actorSession,
+  });
   const payload = singleLinePayload(opts.payload);
   const run = () =>
     db

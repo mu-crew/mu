@@ -199,8 +199,10 @@ const no = (reason: string, task: string | null = null): SettledCloseResult => (
 export function applySettledClose(db: Db, input: SettledCloseInput): SettledCloseResult {
   if (!input.settled) return no("not settled");
   if (input.lastError !== undefined) return no("run ended on an error");
-  return withOpContext(db, { intent: "close.apply", actor: input.agent, group: "new" }, () =>
-    applyInTxn(db, input),
+  return withOpContext(
+    db,
+    { intent: "close.apply", actor: input.agent, workstream: input.workstream, group: "new" },
+    () => applyInTxn(db, input),
   );
 }
 

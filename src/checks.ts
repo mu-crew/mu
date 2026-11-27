@@ -173,22 +173,25 @@ export interface IssueCheckOptions {
 export function issueCheck(db: Db, localId: string, opts: IssueCheckOptions): CheckRow {
   const { harness, model } = parseCheckBy(opts.by);
   if (opts.brief.trim() === "") throw new CheckArgError(say("check.brief_empty"));
-  return withOpContext(db, { intent: "check.issue", actor: opts.author, group: "new" }, () =>
-    db
-      .transaction((): CheckRow => {
-        const taskId = taskIdFor(db, localId, opts.workstream);
-        if (taskId === null) throw new TaskNotFoundError(localId, opts.workstream);
-        const id = newCheckId();
-        const now = new Date().toISOString();
-        db.prepare(
-          `INSERT INTO checks (id, task_id, checker, brief, verdict, state, created_at, updated_at)
+  return withOpContext(
+    db,
+    { intent: "check.issue", actor: opts.author, workstream: opts.workstream, group: "new" },
+    () =>
+      db
+        .transaction((): CheckRow => {
+          const taskId = taskIdFor(db, localId, opts.workstream);
+          if (taskId === null) throw new TaskNotFoundError(localId, opts.workstream);
+          const id = newCheckId();
+          const now = new Date().toISOString();
+          db.prepare(
+            `INSERT INTO checks (id, task_id, checker, brief, verdict, state, created_at, updated_at)
            VALUES (?, ?, ?, ?, NULL, 'open', ?, ?)`,
-        ).run(id, taskId, model === null ? harness : `${harness}/${model}`, opts.brief, now, now);
-        const row = checkById(db, id);
-        if (row === undefined) throw new CheckNotFoundError(id, localId);
-        return row.check;
-      })
-      .immediate(),
+          ).run(id, taskId, model === null ? harness : `${harness}/${model}`, opts.brief, now, now);
+          const row = checkById(db, id);
+          if (row === undefined) throw new CheckNotFoundError(id, localId);
+          return row.check;
+        })
+        .immediate(),
   );
 }
 
@@ -219,25 +222,28 @@ export function recordCheckVerdict(
   const verdict = opts.verdict.replace(/\s+$/, "");
   if (parseVerdict(verdict) === undefined) throw new CheckArgError(say("check.verdict_line"));
   const id = opts.check.trim().toUpperCase();
-  return withOpContext(db, { intent: "check.verdict", actor: opts.author, group: "new" }, () =>
-    db
-      .transaction((): RecordVerdictResult => {
-        const taskId = taskIdFor(db, localId, opts.workstream);
-        if (taskId === null) throw new TaskNotFoundError(localId, opts.workstream);
-        const before = checkById(db, id);
-        if (before === undefined || before.taskId !== taskId) {
-          throw new CheckNotFoundError(id, localId);
-        }
-        if (before.check.verdict === verdict) {
-          return { check: before.check, changed: false, replaced: false };
-        }
-        db.prepare(
-          "UPDATE checks SET verdict = ?, state = 'answered', updated_at = ? WHERE id = ?",
-        ).run(verdict, new Date().toISOString(), id);
-        const after = checkById(db, id);
-        if (after === undefined) throw new CheckNotFoundError(id, localId);
-        return { check: after.check, changed: true, replaced: before.check.verdict !== null };
-      })
-      .immediate(),
+  return withOpContext(
+    db,
+    { intent: "check.verdict", actor: opts.author, workstream: opts.workstream, group: "new" },
+    () =>
+      db
+        .transaction((): RecordVerdictResult => {
+          const taskId = taskIdFor(db, localId, opts.workstream);
+          if (taskId === null) throw new TaskNotFoundError(localId, opts.workstream);
+          const before = checkById(db, id);
+          if (before === undefined || before.taskId !== taskId) {
+            throw new CheckNotFoundError(id, localId);
+          }
+          if (before.check.verdict === verdict) {
+            return { check: before.check, changed: false, replaced: false };
+          }
+          db.prepare(
+            "UPDATE checks SET verdict = ?, state = 'answered', updated_at = ? WHERE id = ?",
+          ).run(verdict, new Date().toISOString(), id);
+          const after = checkById(db, id);
+          if (after === undefined) throw new CheckNotFoundError(id, localId);
+          return { check: after.check, changed: true, replaced: before.check.verdict !== null };
+        })
+        .immediate(),
   );
 }

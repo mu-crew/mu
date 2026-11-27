@@ -274,7 +274,7 @@ export function addBlockEdge(
   blocked: string,
   blocker: string,
 ): BlockEdgeResult {
-  return withOpContext(db, { intent: "task.block", group: "new" }, () =>
+  return withOpContext(db, { intent: "task.block", workstream, group: "new" }, () =>
     addBlockEdgeImpl(db, workstream, blocked, blocker),
   );
 }
@@ -353,7 +353,7 @@ export function removeBlockEdge(
   blocked: string,
   blocker: string,
 ): RemoveBlockEdgeResult {
-  return withOpContext(db, { intent: "task.unblock", group: "new" }, () =>
+  return withOpContext(db, { intent: "task.unblock", workstream, group: "new" }, () =>
     removeBlockEdgeImpl(db, workstream, blocked, blocker),
   );
 }
@@ -421,8 +421,10 @@ export function reparentTask(
   // One group for the whole reparent: it DELETEs the old blocker edges
   // and INSERTs the new ones, which is one operator action,
   // so it shares one op group.
-  return withOpContext(db, { intent: "task.reparent", group: "new" }, () =>
-    reparentTaskImpl(db, taskLocalId, blockers, scope),
+  return withOpContext(
+    db,
+    { intent: "task.reparent", workstream: scope.workstream, group: "new" },
+    () => reparentTaskImpl(db, taskLocalId, blockers, scope),
   );
 }
 
