@@ -608,17 +608,20 @@ describe("df1_wait_stale_dead: a deliberate close of a finished worker is not a 
     });
     seedTask("t1");
     seedTask("t2");
+    // The worker sits idle at run 0: it owes no settle past its provenance baseline (afterRuns 0).
+    pi.runs = 0;
+    pi.real = true;
     await serve("worker-1");
     await as({ managed: "auth/worker-1" }, ["task", "claim", "t1", "-w", "auth", "--json"]);
-    // a wait registers the spawned worker and its task by provenance and delivers the worker's
-    // settle, which leaves the registration; the next wait delivers the close
+    // a wait registers the spawned worker and its task by provenance; the next delivers the close
     const t1 = await as(SESSION, ["wait", "-w", "auth", "--timeout", "0.3"]);
-    expect(t1.data).toMatchObject({ firing: { kind: "settled", ref: "agent:auth/worker-1" } });
-    expect(reg(CALLER)?.refs.map((x) => `${x.kind}:${x.id}`)).toEqual(["task:t1"]);
+    expect(t1.exitCode).toBeNull();
+    expect(reg(CALLER)?.refs.some((x) => x.kind === "agent")).toBe(true);
     closeTaskAs("t1");
     const first = await as(SESSION, ["wait", "-w", "auth"]);
     expect(first.data).toMatchObject({ firing: { kind: "closed", ref: "task:auth/t1" } });
-    expect(t1.exitCode).toBeNull();
+    // the worker is still registered when it is closed: the df1_wait_stale_dead path
+    expect(reg(CALLER)?.refs.some((x) => x.kind === "agent" && x.id === "worker-1")).toBe(true);
     await closeWorker();
     const r = await waitOpen();
     expect((r.data as { firing: { kind: string } }).firing.kind).not.toBe("dead");
