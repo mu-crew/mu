@@ -32,6 +32,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - A row a herdr pane left (pane id `w1:p1`) stays recognised as a **retired backend** (`src/mux/binding.ts`): it is always foreign, so `reconcile` in full mode never reaps it as a ghost or reopens its task, `mu state` reports it `unknown` (`foreign backend: herdr`), and a spawn in its workstream refuses without offering `MU_MUX=herdr`. Every pane-addressed verb on such a row (`agent read`, `send`, `answer`, interrupt/abort, kill and pane probes) refuses with one `RetiredPaneError` (exit 5, `mux.retired_pane`) instead of reaching tmux or Rex with a foreign id. `mu agent close` without `--force` refuses the same way (no row or task touched); `--force` drops the row and reopens its tasks. `mu workstream teardown` keeps the row (`orphanedAgents` reason `retired`) instead of reading the pane as dead. `muxByName("herdr")` throws the retirement message. No state-directory change: the rows are kept as they are.
 - `agent.send_unsupported` (a non-pi, non-hook CLI on tmux) points to Rex (`MU_MUX=rex`) instead of herdr.
 
+### Fixed
+
+- Ops a mu pi extension runs (delegate register/finish, settle and close nudges, task verbs) now record the pi session and turn that ran them (`ops.actor_session`, `actor_anchor`): the extension passes `MU_ACTOR_SESSION` / `MU_ACTOR_ANCHOR`, since pi exports `PI_SESSION_ID` only to its bash tool. On those runs it unsets an inherited `PI_SESSION_ID` / `PI_SESSION_FILE`, so an unknown session or anchor records none, never a parent pi's. A spawned worker pane pins both empty (unset on a remote pane) and a mux-free delegate's child pi inherits none of the four, so a worker's or delegate's ops never credit its spawner. The pi extension bundle stays free of better-sqlite3 (`src/provenance-env.ts`), checked by a test. (mural upstream ask #8, fsj U1)
+
 ## [5.7.0] — 2026-11-27
 
 ### Added
