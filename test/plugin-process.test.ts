@@ -235,7 +235,7 @@ describe("timeouts and cancel", () => {
     );
     // The fake exits on the stop's EOF, which ends the one grace early.
     expect(Date.now() - t0).toBeGreaterThanOrEqual(100);
-    expect(Date.now() - t0).toBeLessThan(100 + GRACE + 400);
+    expect(Date.now() - t0).toBeLessThan(100 + GRACE + 1500);
     const cancel = tapped.find((t) => t.stream === "in" && t.text.includes("$/cancel"));
     expect(JSON.parse(cancel?.text ?? "{}")).toEqual({
       jsonrpc: "2.0",

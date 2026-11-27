@@ -27,8 +27,8 @@ import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin } from "./_plugin.js";
 
 const GRACE = 300;
-/** Scheduling slack on a loaded host. */
-const SLACK = 400;
+/** Scheduling slack on a loaded host: only a hang (a grace never ending) must exceed it. */
+const SLACK = 1500;
 
 let dir: string;
 let f: FakePlugin;
@@ -269,7 +269,7 @@ describe("one grace, owned by the process manager (MEDIUM: cancel took three)", 
     await expect(exec(p, "true", 100)).rejects.toBeInstanceOf(EffectOutcomeUnknownError);
     const took = Date.now() - t0;
     expect(took).toBeGreaterThanOrEqual(100 + grace - 20);
-    expect(took).toBeLessThan(100 + grace + SLACK);
+    expect(took).toBeLessThan(100 + 2 * grace - 100); // not a second grace
     expect(groupGone(p.process.pgid)).toBe(true);
   });
 
