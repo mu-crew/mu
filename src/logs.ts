@@ -79,7 +79,7 @@ interface RawLogRow {
  *  `ops.key` already holds the operator-facing workstream name (the
  *  natural key), so there is no join to do; '' means machine-wide and
  *  is normalised back to NULL in `rowFromDb`. */
-const SELECT_LOG_COLS = `
+const SELECT_LOG_COLS_PROV = `
   l.seq AS seq,
   l.key AS workstream,
   l.actor AS source,
@@ -92,6 +92,34 @@ const SELECT_LOG_COLS = `
   l.actor_anchor AS actor_anchor,
   l.created_at AS created_at
 `;
+
+const SELECT_LOG_COLS_LEGACY = `
+  l.seq AS seq,
+  l.key AS workstream,
+  l.actor AS source,
+  l.intent AS intent,
+  l.group_id AS group_id,
+  l.op AS op,
+  l.entity AS kind,
+  l.payload AS payload,
+  NULL AS actor_session,
+  NULL AS actor_anchor,
+  l.created_at AS created_at
+`;
+
+// Read-only handles opened against a DB that has not run the additive
+// `actor_session`/`actor_anchor` ALTER TABLE yet must still read logs cleanly.
+const hasProvColsCache = new WeakMap<Db, boolean>();
+function selectLogCols(db: Db): string {
+  let has = hasProvColsCache.get(db);
+  if (has === undefined) {
+    const cols = db.prepare("PRAGMA table_info(ops)").all() as { name: string }[];
+    has =
+      cols.some((c) => c.name === "actor_session") && cols.some((c) => c.name === "actor_anchor");
+    hasProvColsCache.set(db, has);
+  }
+  return has ? SELECT_LOG_COLS_PROV : SELECT_LOG_COLS_LEGACY;
+}
 
 const LOG_FROM_JOIN = "FROM ops l";
 
@@ -484,7 +512,7 @@ export function listLogs(db: Db, opts: ListLogsOptions = {}): LogRow[] {
     const newest = (scope: { sql: string; params: unknown[] }) =>
       db
         .prepare(
-          `SELECT ${SELECT_LOG_COLS} ${LOG_FROM_JOIN} WHERE ${[scope.sql, ...conditions].join(" AND ")} ORDER BY l.seq DESC LIMIT ?`,
+          `SELECT ${selectLogCols(db)} ${LOG_FROM_JOIN} WHERE ${[scope.sql, ...conditions].join(" AND ")} ORDER BY l.seq DESC LIMIT ?`,
         )
         .all(...scope.params, ...params, limit) as RawLogRow[];
     // An active workstream fills the limit from the newest ops; try
@@ -503,7 +531,7 @@ export function listLogs(db: Db, opts: ListLogsOptions = {}): LogRow[] {
   }
   const where = `WHERE ${conditions.join(" AND ")}`;
 
-  let sql = `SELECT ${SELECT_LOG_COLS} ${LOG_FROM_JOIN} ${where} ORDER BY l.seq ASC`;
+  let sql = `SELECT ${selectLogCols(db)} ${LOG_FROM_JOIN} ${where} ORDER BY l.seq ASC`;
   if (opts.limit !== undefined) {
     sql += " LIMIT ?";
     params.push(opts.limit);
