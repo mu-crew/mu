@@ -66,6 +66,8 @@ export interface MuPiContext extends DelegateCtx {
   isIdle(): boolean;
   hasPendingMessages(): boolean;
   abort(): void;
+  /** pi's run mode: "tui", "rpc", "json" or "print"; absent on older pi. */
+  mode?: string;
   /** The session's active model; absent before pi picks one. */
   model?: { provider: string; id: string };
   /** pi's model registry: resolves a `model` op's `<provider>/<id>`. */
@@ -459,6 +461,14 @@ export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void
 }
 
 /**
+ * A pi with no UI (print, json or rpc mode) shares a pane it does not own, so
+ * it never claims or writes `@mu_pending`, managed or not.
+ */
+function headless(c: { hasUI?: boolean; mode?: string } | undefined): boolean {
+  return c?.hasUI === false || (c?.mode !== undefined && c.mode !== "tui");
+}
+
+/**
  * Child side: serve `$MU_CTL_SOCK` for the mu that spawned this pi.
  * Returns whether this pi is nested (another pi serves the socket), read
  * from the process-global state so a reloaded runtime sees the decision.
@@ -467,9 +477,10 @@ function serveCtl(pi: MuPiApi): () => boolean {
   const sock = process.env.MU_CTL_SOCK;
   if (!sock) {
     trackUiPrompts(pi);
-    // No control socket: a pi started outside mu owns its pane's `@mu_pending`.
-    pi.on("session_start", async () => {
-      void claimPendingPaneOption(true);
+    // No control socket: a pi started outside mu owns its pane's `@mu_pending`,
+    // unless it has no UI (a nested `pi -p` in a human's pi pane).
+    pi.on("session_start", async (_e, c) => {
+      void claimPendingPaneOption(!headless(c));
     });
     return () => false;
   }
@@ -1033,7 +1044,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     if (s) {
       // A new/resumed session keeps the same socket, while the path is ours.
       if (g.ino !== undefined && inodeOf(sockPath) === g.ino) {
-        void claimPendingPaneOption(true);
+        void claimPendingPaneOption(!headless(c));
         return;
       }
       // Orphaned: the file was deleted or replaced under a live server.
@@ -1045,7 +1056,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     await bind();
     // `@mu_pending` follows the socket: the pi serving it owns the pane; a
     // nested pi (`pi -p` here) leaves the parent's count alone.
-    void claimPendingPaneOption(g.nested !== true);
+    void claimPendingPaneOption(g.nested !== true && !headless(c));
   });
 
   pi.on("session_shutdown", async (e) => {

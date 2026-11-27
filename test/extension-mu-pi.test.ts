@@ -864,6 +864,51 @@ describe("mu pi extension", () => {
       }
     });
 
+    it("@mu_pending: in an unmanaged pane, a pi with no UI (`pi -p`, json, rpc) never writes it", async () => {
+      const keys = ["TMUX", "TMUX_PANE", "TERM_PROGRAM", "MU_CTL_SOCK"] as const;
+      for (const key of keys) delete process.env[key];
+      process.env.TMUX = "/tmp/tmux-501/default,123,0";
+      process.env.TMUX_PANE = "%7";
+      const seen: string[][] = [];
+      const runner = async (argv: readonly string[]) => {
+        if (argv[2] === "display") return "123\n";
+        seen.push([...argv]);
+        return "";
+      };
+      try {
+        // The human's interactive pi owns the pane: it unsets at start.
+        setPaneOptionRunnerForTests(runner);
+        const human = fakePi();
+        muPi(human.pi);
+        Object.assign(human.ctx, { hasUI: true, mode: "tui" });
+        await human.emit("session_start");
+        await new Promise((r) => setImmediate(r));
+        expect(seen.map((a) => a.slice(-2))).toEqual([["-u", "@mu_pending"]]);
+        // A nested headless pi in the same pane (its own process: fresh module state).
+        for (const ui of [
+          { hasUI: false, mode: "print" },
+          { hasUI: false, mode: "json" },
+          { hasUI: true, mode: "rpc" },
+        ]) {
+          setPaneOptionRunnerForTests(runner);
+          seen.splice(0);
+          const nested = fakePi();
+          muPi(nested.pi);
+          Object.assign(nested.ctx, ui);
+          await nested.emit("session_start");
+          await new Promise((r) => setImmediate(r));
+          await reportPendingPaneOption(2);
+          await clearPendingPaneOption();
+          await nested.emit("session_shutdown", { reason: "quit" });
+          expect(seen, ui.mode).toEqual([]);
+        }
+      } finally {
+        setPaneOptionRunnerForTests(async () => undefined);
+        for (const key of keys) delete process.env[key];
+        process.env.MU_CTL_SOCK = sock;
+      }
+    });
+
     /** A mu that says the parent agent owns an IN_PROGRESS task, and whose settle wait fires. */
     const busyMu = () =>
       vi.fn<MuRunner>(async (args) => {
