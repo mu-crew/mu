@@ -187,6 +187,7 @@ const VERBS: Record<KnownIntent, string> = {
   "agent.kick": "agent kick",
   "agent.send": "agent send",
   "agent.abort": "agent abort",
+  "agent.model": "agent model",
   // Payload prose reads "agent stalled ..."; keep the verb matching it
   // so the emitted text is not printed with a second, different verb.
   "agent.stall": "agent stalled",
@@ -389,6 +390,7 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
     case "agent.kick":
     case "agent.send":
     case "agent.abort":
+    case "agent.model":
     case "agent.stall":
     case "host.acquire":
     case "host.release":

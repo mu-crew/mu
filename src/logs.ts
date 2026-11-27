@@ -630,6 +630,7 @@ export type LocalIntent =
   | "agent.kick"
   | "agent.send"
   | "agent.abort"
+  | "agent.model"
   | "agent.stall"
   | "host.acquire"
   | "host.release"

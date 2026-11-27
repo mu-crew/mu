@@ -18,13 +18,19 @@
 import type { RuntimeState, StateAgentRef, StateReading } from "../agent-state.js";
 import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/observe.js";
 import type { AgentRow } from "../agents.js";
-import type { CtlCommandName, CtlState } from "../ctl/protocol.js";
+import type { CtlCommandName, CtlEffort, CtlState } from "../ctl/protocol.js";
 import type { JobGone } from "../jobs/kinds.js";
 import type { JobLiveness, JobRef } from "../jobs/types.js";
 import type { SendOptions } from "../mux.js";
 
 /** The ctl protocol's state facts, as the rest of mu names them. */
-export type { CtlBlocked, CtlCommandName, CtlState, CtlTool } from "../ctl/protocol.js";
+export type {
+  CtlBlocked,
+  CtlCommandName,
+  CtlEffort,
+  CtlState,
+  CtlTool,
+} from "../ctl/protocol.js";
 
 /** The built-in channels; also the values `agents.channel` may hold today. */
 export type BuiltinChannelName = "ctl" | "hooks" | "mux";
@@ -468,6 +474,16 @@ export type DeliveryOptions = SendOptions & {
   ctlGuard?: CtlGuard;
 };
 
+/** What `model` switched to, as the agent reports it after the switch. */
+export interface ModelResult {
+  transport: ChannelName;
+  /** `<provider>/<id>`; absent when the agent did not report it. */
+  model?: string;
+  /** The effective thinking level (pi clamps an effort the model lacks). */
+  thinkingLevel?: string;
+  state?: CtlState;
+}
+
 /** A pi session command: `/new`, `/reload`, or `/compact` with optional instructions. */
 export interface SessionCommand {
   name: CtlCommandName;
@@ -583,4 +599,9 @@ export interface ChannelDelivery {
     keys: readonly string[],
     opts: { force?: boolean },
   ): Promise<AnswerResult>;
+  /**
+   * Switch the session's model (`<provider>/<id>`) and, with `effort`, its
+   * thinking level. Optional: a channel without it cannot (only ctl can).
+   */
+  model?(target: DeliveryTarget, model: string, opts: { effort?: CtlEffort }): Promise<ModelResult>;
 }

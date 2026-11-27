@@ -67,6 +67,8 @@ export {
   AgentFreshUnconfirmedError,
   AgentInterruptUnrecordedError,
   AgentLockBusyError,
+  AgentModelNeedsCtlError,
+  AgentModelRefusedError,
   AgentNameExhaustedError,
   AgentNotBlockedError,
   AgentNotFoundError,

@@ -270,12 +270,12 @@ describe("ctl row", () => {
     expect(r.check).toEqual({
       name: "ctl",
       status: "warn",
-      detail: "ws/w1: extension lacks ops: interrupt, fresh, command",
+      detail: "ws/w1: extension lacks ops: interrupt, fresh, command, model",
     });
     expect(r.agents[0]).toMatchObject({
       probe: "ok",
       outdated: true,
-      missingOps: ["interrupt", "fresh", "command"],
+      missingOps: ["interrupt", "fresh", "command", "model"],
     });
   });
 

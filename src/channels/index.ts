@@ -6,6 +6,7 @@
 // hubs import them from ./ctl.js, and test/channel-imports.test.ts holds that
 // list.
 
+export { CTL_EFFORTS, parseModelRef } from "../ctl/protocol.js";
 export { composeChannel } from "./compose.js";
 export {
   blockedReason,
@@ -64,6 +65,7 @@ export {
   type ChannelWatch,
   type CtlBlocked,
   type CtlCommandName,
+  type CtlEffort,
   type CtlGuard,
   type CtlState,
   type CtlTool,
@@ -71,6 +73,7 @@ export {
   type DeliveryTarget,
   type InterruptResult,
   type MessageCheck,
+  type ModelResult,
   type RunBaseline,
   type SendResult,
   type SentFacts,

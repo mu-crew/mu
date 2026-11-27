@@ -84,7 +84,13 @@ export class CtlDeliveryUnknownError extends Error {
 }
 
 /** Ops that change pi's state: a failure after the write is ambiguous. */
-const SIDE_EFFECT_OPS: ReadonlySet<string> = new Set(["send", "fresh", "interrupt", "command"]);
+const SIDE_EFFECT_OPS: ReadonlySet<string> = new Set([
+  "send",
+  "fresh",
+  "interrupt",
+  "command",
+  "model",
+]);
 
 /**
  * The extension answered "unknown op": it was loaded before mu learned

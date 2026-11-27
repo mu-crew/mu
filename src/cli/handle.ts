@@ -43,6 +43,7 @@ import {
   AgentFreshUnconfirmedError,
   AgentInterruptUnrecordedError,
   AgentLockBusyError,
+  AgentModelNeedsCtlError,
   AgentNameExhaustedError,
   AgentNotBlockedError,
   AgentNotFoundError,
@@ -462,6 +463,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof LogKindReservedError ||
     // abort on a non-pi agent: there is no control socket to carry it.
     err instanceof AgentAbortNeedsCtlError ||
+    // model on a channel that cannot switch it (only ctl can).
+    err instanceof AgentModelNeedsCtlError ||
     // send --fresh on an agent with no control socket: wrong recipe.
     err instanceof AgentFreshNeedsCtlError ||
     // a steer or a dialog answer on a channel that has none: wrong recipe.

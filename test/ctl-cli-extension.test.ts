@@ -43,7 +43,20 @@ beforeEach(async () => {
   process.env.MU_AGENT_NAME = "worker-1";
   process.env.MU_WORKSTREAM = "auth";
   const handlers = new Map<string, Handler[]>();
-  const ctx = { isIdle: () => true, hasPendingMessages: () => false, abort: vi.fn() };
+  const models = [{ provider: "anthropic", id: "claude-haiku-4-5" }];
+  let level = "medium";
+  let current: { provider: string; id: string } | undefined;
+  const ctx = {
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+    abort: vi.fn(),
+    get model() {
+      return current;
+    },
+    modelRegistry: {
+      find: (p: string, id: string) => models.find((m) => m.provider === p && m.id === id),
+    },
+  };
   muPi({
     on(e: string, h: Handler) {
       handlers.set(e, [...(handlers.get(e) ?? []), h]);
@@ -54,6 +67,14 @@ beforeEach(async () => {
     registerTool: vi.fn(),
     sendMessage: vi.fn(),
     events: { emit: vi.fn() },
+    setModel: async (m: { provider: string; id: string }) => {
+      current = m;
+      return true;
+    },
+    getThinkingLevel: () => level,
+    setThinkingLevel: (l: string) => {
+      level = l;
+    },
   } as never);
   emit = async (event) => {
     for (const h of handlers.get(event) ?? []) await h({ type: event }, ctx as never);
@@ -136,5 +157,78 @@ describe("CLI against the real extension", () => {
     expect(stale.exitCode).toBe(4);
     expect(stale.doc).toMatchObject({ error: "AgentRestartedError" });
     expect(stale.doc.message).toContain(`inc-from-an-old-pi → ${inc}`);
+  });
+
+  it("agent model switches pi's model over ctl and reports it; a bad model is exit 1, a bad ref exit 2", async () => {
+    const r = await runCliJson(
+      [
+        "agent",
+        "model",
+        "worker-1",
+        "anthropic/claude-haiku-4-5",
+        "--effort",
+        "low",
+        "-w",
+        "auth",
+        "--json",
+      ],
+      dbPath,
+    );
+    expect(r.exitCode).toBeNull();
+    expect(r.data).toMatchObject({
+      agent: "worker-1",
+      transport: "ctl",
+      model: "anthropic/claude-haiku-4-5",
+      thinkingLevel: "low",
+    });
+    const human = await runCli(
+      ["agent", "model", "worker-1", "anthropic/claude-haiku-4-5", "-w", "auth"],
+      dbPath,
+    );
+    expect(human.stdout).toContain("worker-1 → anthropic/claude-haiku-4-5 (thinking low)");
+    const unknown = await runCli(
+      ["agent", "model", "worker-1", "anthropic/nope", "-w", "auth"],
+      dbPath,
+    );
+    expect(unknown.exitCode).toBe(1);
+    expect(unknown.stderr).toContain("unknown model anthropic/nope; the model is unchanged");
+    const ref = await runCli(["agent", "model", "worker-1", "haiku", "-w", "auth"], dbPath);
+    expect(ref.exitCode).toBe(2);
+    const effort = await runCli(
+      [
+        "agent",
+        "model",
+        "worker-1",
+        "anthropic/claude-haiku-4-5",
+        "--effort",
+        "huge",
+        "-w",
+        "auth",
+      ],
+      dbPath,
+    );
+    expect(effort.exitCode).toBe(2);
+  });
+
+  it("agent model refuses an agent off the ctl channel (exit 2) without touching its pane", async () => {
+    insertAgent(db, {
+      name: "claude-1",
+      workstream: "auth",
+      paneId: "%2",
+      cli: "claude",
+      channel: "hooks",
+    });
+    const before = mux.calls.length;
+    const r = await runCli(
+      ["agent", "model", "claude-1", "anthropic/claude-haiku-4-5", "-w", "auth"],
+      dbPath,
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain(
+      "is on the hooks channel: switching its model needs pi's control socket",
+    );
+    expect(
+      mux.calls.slice(before).filter((c) => c[0] === "paste-buffer" || c[0] === "send-keys"),
+    ).toEqual([]);
   });
 });

@@ -52,6 +52,10 @@ socket. Pick the mode by what the agent is doing:
   the socket and report pi's answer (for example `Nothing to compact`).
   They refuse with exit 4 while pi is busy; `--force` overrides. Any
   other slash command exits 2.
+- `/model` is not a send: `mu agent model <a> <provider>/<id> [--effort
+  <level>] -w <ws>` switches a pi agent's model (and thinking level)
+  through the socket, busy or idle; a running turn finishes on the old
+  model. An agent not on the ctl channel exits 2.
 - If the socket does not answer, the send fails with exit 1 and
   pastes nothing.
 - A send's `--json` carries `msgId`, `incarnation` and `delivery`

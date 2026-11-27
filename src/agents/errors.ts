@@ -4,6 +4,7 @@
 // here. The CLI's classifyError() (src/cli/handle.ts) maps them to exit
 // codes:
 //   usage      → 2   (AgentAbortNeedsCtlError, AgentFreshNeedsCtlError,
+//                     AgentModelNeedsCtlError,
 //                     AgentSlashCommandUnsupportedError)
 //   not found  → 3   (AgentNotFoundError)
 //   conflict   → 4   (AgentExistsError, AgentNameExhaustedError,
@@ -466,6 +467,34 @@ export class AgentAbortNeedsCtlError extends Error {
     public readonly cli: string,
   ) {
     super(say("agent.abort_needs_ctl", agentName, cli));
+  }
+}
+
+/**
+ * `mu agent model` on an agent whose channel cannot switch models (only
+ * pi's control socket can): mu never types `/model` into a pane. Exit 2.
+ */
+export class AgentModelNeedsCtlError extends Error {
+  override readonly name = "AgentModelNeedsCtlError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly channel: string,
+  ) {
+    super(say("agent.model_needs_ctl", agentName, workstream, channel));
+  }
+}
+
+/** pi answered the `model` op with `ok: false` (unknown model, no auth): nothing changed. */
+export class AgentModelRefusedError extends Error {
+  override readonly name = "AgentModelRefusedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly model: string,
+    public readonly reason: string,
+  ) {
+    super(say("agent.model_refused", agentName, model, reason));
   }
 }
 

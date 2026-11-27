@@ -18,6 +18,7 @@ import {
   AgentCtlUnreachableError,
   AgentEmptySendError,
   AgentExtensionOutdatedError,
+  AgentModelRefusedError,
   AgentPaneDeadError,
   AgentReplacedError,
   AgentRestartedError,
@@ -40,6 +41,7 @@ import {
 import {
   CTL_COMMANDS,
   type CtlCommandName,
+  type CtlEffort,
   type CtlFeature,
   type CtlReply,
   type CtlRequest,
@@ -59,6 +61,7 @@ import type {
   DeliveryTarget,
   InterruptResult,
   MessageCheck,
+  ModelResult,
   SendResult,
   SessionCommand,
 } from "./types.js";
@@ -604,11 +607,43 @@ async function ctlAbort(
   return { before, after: w.state ?? "idle", settled: true, aborted, pending };
 }
 
+/** Switch pi's model through the ctl `model` op (fenced to the incarnation the hello saw). */
+async function ctlModel(
+  target: DeliveryTarget,
+  model: string,
+  opts: { effort?: CtlEffort },
+): Promise<ModelResult> {
+  const { agent } = target;
+  const sock = targetSocket(target);
+  const { bound } = await fencedHello(agent, sock, { needsFence: true });
+  const host = workspaceHost(agent);
+  if (host !== undefined) await requireMuleMaster([host]);
+  const reply = await ctlRequestFor(agent, sock, {
+    op: "model",
+    model,
+    ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
+    ...bound,
+  });
+  if (!reply.ok) {
+    if (reply.error === INCARNATION_MISMATCH) {
+      throw new AgentReplacedError(agent.name, agent.workstreamName, "sent to");
+    }
+    throw new AgentModelRefusedError(agent.name, agent.workstreamName, model, reply.error);
+  }
+  return {
+    transport: "ctl",
+    ...(reply.model !== undefined ? { model: reply.model } : {}),
+    ...(reply.thinkingLevel !== undefined ? { thinkingLevel: reply.thinkingLevel } : {}),
+    ...(reply.state !== undefined ? { state: reply.state } : {}),
+  };
+}
+
 /** The ctl channel's delivery verbs. */
 export const ctlDelivery: ChannelDelivery = {
   send: ctlSend,
   fresh: ctlFresh,
   command: ctlCommand,
+  model: ctlModel,
   interrupt: ctlInterrupt,
   abort: ctlAbort,
   // pi's dialogs are its own UI, with no ctl op to answer them: the human answers in the pane.

@@ -80,11 +80,40 @@ export type CtlRequest =
       force?: boolean;
       /** As on `send`: another incarnation is refused before any session change. */
       expectIncarnation?: string;
+    }
+  /**
+   * Switch the session's model (pi's `/model`), through pi's extension API
+   * (setModel, setThinkingLevel), so it needs no idle pi: a busy turn keeps
+   * its model, the next model call uses the new one. `model` is
+   * `<provider>/<id>`; `effort` also sets the thinking level, which pi
+   * clamps to what the model supports. Replies the status with the
+   * resulting `model` and `thinkingLevel`.
+   */
+  | {
+      op: "model";
+      model: string;
+      effort?: CtlEffort;
+      /** As on `send`: another incarnation is refused before the switch. */
+      expectIncarnation?: string;
     };
 
 /** Session commands the `command` op runs: `/new`, `/reload`, `/compact`. */
 export const CTL_COMMANDS = ["new", "reload", "compact"] as const;
 export type CtlCommandName = (typeof CTL_COMMANDS)[number];
+
+/** Thinking levels the `model` op's `effort` takes (pi's ThinkingLevel). */
+export const CTL_EFFORTS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type CtlEffort = (typeof CTL_EFFORTS)[number];
+
+/**
+ * Split `<provider>/<id>` at its first "/" (an id may hold more, as
+ * openrouter's do); undefined when either half is empty.
+ */
+export function parseModelRef(ref: string): { provider: string; id: string } | undefined {
+  const slash = ref.indexOf("/");
+  if (slash <= 0 || slash === ref.length - 1) return undefined;
+  return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
+}
 
 /**
  * Every op this protocol defines. The extension reports the ops it serves
@@ -100,13 +129,14 @@ export const CTL_OPS = [
   "interrupt",
   "fresh",
   "command",
+  "model",
 ] as const satisfies readonly CtlRequest["op"][];
 
 /**
  * Optional capabilities, listed in the `hello` reply's `features`. Ops stay
  * as they are: a feature is a field an old client never sends and ignores.
  * `fence`: `expectIncarnation` is honoured on every side-effecting op
- * (send, fresh, interrupt, command); an extension without it ignores the
+ * (send, fresh, interrupt, command, model); an extension without it ignores the
  * field on interrupt and command, so a caller never relies on it there.
  */
 export const CTL_FEATURES = ["incarnation", "msgId", "fence"] as const;
@@ -139,6 +169,10 @@ export type CtlStatus = {
   blocked?: CtlBlocked;
   /** The running tool, `null` when none; absent from older extensions (unknown, not "none"). */
   tool?: CtlTool | null;
+  /** The session's model as `<provider>/<id>`; absent before pi picks one or from older extensions. */
+  model?: string;
+  /** The effective thinking level (pi's, clamped to the model); absent from older extensions. */
+  thinkingLevel?: string;
 };
 
 export type CtlReply =

@@ -17,10 +17,12 @@ const SRC = join(ROOT, "src");
 const CHANNEL_CALL_SITES = [
   "src/agent-state.ts",
   "src/agents/abort.ts",
+  "src/agents/model.ts",
   "src/agents/observe.ts",
   "src/agents/task-spawn.ts",
   "src/agents/transport.ts",
   "src/auto-attempt.ts",
+  "src/cli/agent-model.ts",
   "src/cli/agents.ts",
   "src/close-notice.ts",
   "src/dashboard-data.ts",
@@ -57,6 +59,7 @@ const CHANNEL_ENTRY_POINTS = ["agentChannel", "ctlChannel", "deliver", "readAgen
 const DELIVERY_CALL_SITES = [
   "src/agents.ts",
   "src/agents/abort.ts",
+  "src/agents/model.ts",
   "src/agents/task-spawn.ts",
   "src/agents/transport.ts",
   "src/cli/agents.ts",
@@ -66,7 +69,7 @@ const DELIVERY_CALL_SITES = [
 const DELIVERY_ENTRY_POINTS = ["agentChannel", "deliver"];
 
 /** The delivery verbs of `AgentChannel` (answer since U8), and the raw ctl ops they replace. */
-const DELIVERY_VERBS = ["send", "fresh", "command", "interrupt", "abort", "answer"];
+const DELIVERY_VERBS = ["send", "fresh", "command", "interrupt", "abort", "answer", "model"];
 const CTL_DELIVERY_NAMES = [
   "ctlFailure",
   "ctlRequestFor",

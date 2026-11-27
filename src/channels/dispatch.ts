@@ -163,6 +163,7 @@ function gated(channel: AgentChannel, gate: () => Promise<void>): AgentChannel {
     interrupt: wrap(channel.interrupt),
     abort: wrap(channel.abort),
     answer: wrap(channel.answer),
+    ...(channel.model ? { model: wrap(channel.model) } : {}),
   };
 }
 

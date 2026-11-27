@@ -67,6 +67,7 @@ import { ctlAgentHooks } from "../wait-ctl.js";
 import { wireAnswerCommand } from "./agent-answer.js";
 import { wireCloseCommand } from "./agent-close.js";
 import { wireCollectCommand } from "./agent-collect.js";
+import { wireModelCommand } from "./agent-model.js";
 import { wireReattachCommand } from "./agent-reattach.js";
 import { cmdSend } from "./agent-send.js";
 import { setNextOutcome } from "./handle.js";
@@ -1382,6 +1383,7 @@ export function wireAgentCommands(program: Command): void {
   wireCloseCommand(agent);
   wireCollectCommand(agent);
   wireAnswerCommand(agent);
+  wireModelCommand(agent);
   wireReattachCommand(agent);
 
   // `mu agent abort` — stop a pi agent's turn through its control socket.

@@ -22,6 +22,7 @@ import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import {
   CTL_COMMANDS,
+  CTL_EFFORTS,
   CTL_FEATURES,
   CTL_MSGID_MAX_LENGTH,
   CTL_MSGID_MEMORY,
@@ -35,6 +36,7 @@ import {
   encode,
   INCARNATION_MISMATCH,
   LineDecoder,
+  parseModelRef,
   UNKNOWN_OP_PREFIX,
 } from "../src/ctl/protocol.js";
 import {
@@ -63,6 +65,10 @@ export interface MuPiContext extends DelegateCtx {
   isIdle(): boolean;
   hasPendingMessages(): boolean;
   abort(): void;
+  /** The session's active model; absent before pi picks one. */
+  model?: { provider: string; id: string };
+  /** pi's model registry: resolves a `model` op's `<provider>/<id>`. */
+  modelRegistry?: { find(provider: string, id: string): unknown };
 }
 
 /** The slice of pi's ReplacedSessionContext: bound to the NEW session. */
@@ -113,6 +119,10 @@ export interface MuPiApi extends MuDelegateApi {
       handler: (args: string, ctx: MuPiCommandContext) => Promise<void>;
     },
   ): void;
+  /** Switch the session's model; false when its provider has no auth. */
+  setModel?(model: unknown): Promise<boolean>;
+  getThinkingLevel?(): string;
+  setThinkingLevel?(level: string): void;
 }
 
 /** Internal command behind the `fresh` op: new session + prompt, inside pi. */
@@ -493,7 +503,18 @@ function serveCtl(pi: MuPiApi): () => boolean {
     tool: toolStatus([...g.tools.values()].at(-1)),
     ...sessionFileOf(g.ctx),
     ...blockedField(),
+    ...modelFields(),
   });
+
+  /** The session's model and thinking level, as far as this pi reports them. */
+  const modelFields = (): { model?: string; thinkingLevel?: string } => {
+    const m = g.ctx?.model;
+    const level = g.pi.getThinkingLevel?.();
+    return {
+      ...(m ? { model: `${m.provider}/${m.id}` } : {}),
+      ...(level !== undefined ? { thinkingLevel: level } : {}),
+    };
+  };
 
   /** Remember an accepted msgId with the `runs` its reply carried; evicts the oldest. */
   const remember = (id: string | undefined, runs: number): void => {
@@ -690,6 +711,32 @@ function serveCtl(pi: MuPiApi): () => boolean {
     });
   }
 
+  /** Switch model (and thinking level) through pi's API: no slash command, busy or idle. */
+  async function model(req: Record<string, unknown>): Promise<Reply> {
+    const stale = incarnationRefusal(req, "expectIncarnation");
+    if (stale) return stale;
+    const raw = str(req, "model");
+    const ref = raw === undefined ? undefined : parseModelRef(raw);
+    if (!ref) return fail("model needs a string <provider>/<id>");
+    const effort = "effort" in req ? CTL_EFFORTS.find((e) => e === req.effort) : undefined;
+    if ("effort" in req && effort === undefined) {
+      return fail(`effort must be one of ${CTL_EFFORTS.join(", ")}`);
+    }
+    const registry = g.ctx?.modelRegistry;
+    if (!registry || !g.pi.setModel || (effort !== undefined && !g.pi.setThinkingLevel)) {
+      return fail("this pi cannot switch models from an extension");
+    }
+    const found = registry.find(ref.provider, ref.id);
+    if (found === undefined || found === null) return fail(`unknown model ${raw}`);
+    try {
+      if (!(await g.pi.setModel(found))) return fail(`no auth configured for ${ref.provider}`);
+      if (effort !== undefined) g.pi.setThinkingLevel?.(effort);
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+    return { v: V, ok: true, ...status() };
+  }
+
   function fresh(req: Record<string, unknown>): Promise<Reply> | Reply {
     const stale = incarnationRefusal(req, "expectIncarnation");
     if (stale) return stale;
@@ -784,6 +831,8 @@ function serveCtl(pi: MuPiApi): () => boolean {
         return fresh(req);
       case "command":
         return command(req);
+      case "model":
+        return model(req);
       case "wait":
         if ("incarnation" in req && req.incarnation !== g.incarnation) {
           return { ...fail(INCARNATION_MISMATCH), incarnation: g.incarnation };

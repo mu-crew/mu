@@ -45,6 +45,8 @@ export {
   type AgentIdentity,
   AgentInterruptUnrecordedError,
   AgentLockBusyError,
+  AgentModelNeedsCtlError,
+  AgentModelRefusedError,
   AgentNameExhaustedError,
   AgentNotBlockedError,
   AgentNotFoundError,

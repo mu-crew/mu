@@ -12,6 +12,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Added
+
+- `mu agent model <name> <provider>/<id> [--effort off|minimal|low|medium|high|xhigh|max] -w <ws>` switches a running pi agent's model, and with `--effort` its thinking level, over the control socket's new `model` op (pi's `setModel` / `setThinkingLevel`, never a typed `/model`; busy or idle, the running turn finishes on the old model). `--json` returns `{agent, workstream, transport, model, thinkingLevel, state}`. An agent off the ctl channel is refused with `AgentModelNeedsCtlError` (exit 2); pi refusing (unknown model, no auth) is `AgentModelRefusedError` (exit 1), model unchanged. The ctl `status` reply now carries `model` and `thinkingLevel`; the switch logs an `agent.model` event. `ChannelDelivery.model` is optional (only ctl has it). An extension loaded before this answers `unknown op` (`AgentExtensionOutdatedError`): `/reload` it. (mural upstream ask #2)
+
 ### Removed
 
 - **BREAKING (semver-major, mu 6): the herdr backend.** mu drives tmux (vtmux or vanilla) and Rex only (spec 2026-11-27-rex-first-class §5). `src/mux/herdr.ts` is gone, and with it the SDK's `herdrBackend`, `HerdrError`, `HerdrSyntaxError`, `HerdrUnsupportedCliError`, `HerdrCommandOverrideError`, `HerdrWorkspaceGroupCloseError`, `isHerdrStatusUsable`, `setHerdrExecutor` and `resetHerdrExecutor`. `MuxBackendName` is `"rex" | "tmux"`. The herdr-only `MuxBackend` members go too: `spawnAgentWaitsReady`, `runsShellCommand`, `paneOccupied`, `reloadCommands`, `SpawnAgentPaneOptions.commandSource`, `SendOptions.readinessMs` and the `paste-vanished` send warning. `HostSpawnUnsupportedError` (only herdr raised it) is removed from the SDK, as is `viewRunning`'s `occupied` option and `AgentExtensionOutdatedError.recovery.muxReload`. `MU_MUX=herdr` now fails with a retirement message (exit 1); `$HERDR_ENV` and `MU_HERDR_SESSION` are no longer read.

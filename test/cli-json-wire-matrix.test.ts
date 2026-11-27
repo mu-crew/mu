@@ -44,6 +44,7 @@ const ARGS: Record<string, string[]> = {
   "agent collect": ["worker-1"],
   "agent reattach": ["worker-1"],
   "agent abort": ["worker-1"],
+  "agent model": ["worker-1", "anthropic/claude-haiku-4-5"],
   "agent wait": ["worker-1", "--timeout", "0.05"],
   "me tasks": [],
   "me next": [],

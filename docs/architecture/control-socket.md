@@ -30,12 +30,13 @@ reply carries `v: 1`; the client (`src/ctl/client.ts`) throws
 | op | does |
 | --- | --- |
 | `hello` | identity plus `ops` (served ops), `features` (`incarnation`, `msgId`, `fence`) and `extVersion` (the mu version the extension was built from) |
-| `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending`, pi's `sessionFile` when it has one, and `tool` (`{name, since}` of the innermost running tool, `null` when none; absent from older extensions, which reads as unknown). With `msgId`, also `msg: { id, accepted, runs?, at? }`: whether that `send`/`fresh`/`interrupt` was accepted (`runs` is the baseline its reply carried) |
+| `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending`, pi's `sessionFile` when it has one, `tool` (`{name, since}` of the innermost running tool, `null` when none; absent from older extensions, which reads as unknown), and `model` (`<provider>/<id>`) and `thinkingLevel` (absent from older extensions). With `msgId`, also `msg: { id, accepted, runs?, at? }`: whether that `send`/`fresh`/`interrupt` was accepted (`runs` is the baseline its reply carried) |
 | `send` | `pi.sendUserMessage`; when busy, `mode` is `steer` or `followUp` (default). Replies with the `status` fields measured before the dispatch, so `runs` is the baseline for a later `wait` |
 | `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` and pi's `sessionFile`. With `incarnation` that differs from the current one, replies `incarnation mismatch` (plus the current `incarnation`) at once, without waiting |
 | `abort` | `ctx.abort()` (pi's Esc) |
 | `interrupt` | busy: `ctx.abort()`, wait for `agent_settled` (up to `timeoutMs`), then `pi.sendUserMessage(text)` as a new run; idle: just the send. Replies `wasBusy`, `pending` (measured before the abort) and the `status` fields measured after the settle and before the send, so `runs` is the `wait` baseline for the new run. `timeout`: nothing sent |
 | `fresh` | new session plus prompt as one operation, through the internal `/mu-fresh` command; replies once the new run starts; refused with `busy` unless `force` |
+| `model` | `model` `<provider>/<id>` (split at the first `/`) and optional `effort` (`off` … `max`), through `ctx.modelRegistry.find()`, `pi.setModel()` and `pi.setThinkingLevel()` (no slash command, so busy or idle; the next model call uses it). Replies the `status` fields, with the resulting `model` and the clamped `thinkingLevel`. Refuses an unknown model and a provider without auth; backs `mu agent model` |
 | `command` | `name` `new`, `reload` or `compact` (with optional `instructions`), through the internal `/mu-new`, `/mu-reload`, `/mu-compact` commands, which call `ctx.newSession()`, `ctx.reload()`, `ctx.compact()`. `new` replies once the session is replaced, `reload` after the `session_start` it causes, `compact` when compaction starts or with pi's error (`Nothing to compact ...`). Refused with `busy` unless `force` |
 
 `pi.sendUserMessage` dispatches only extension commands, not pi's
@@ -65,7 +66,7 @@ The CLI side: every ctl `send`, `fresh` and `interrupt` carries a fresh
 `receipt: "confirmed-after-timeout"`; anything else is
 `AgentSendIndeterminateError` (exit 1) carrying the `msgId`, whose Next
 is `mu agent check <a> <msgId>`. It never resends. Every side-effecting op
-(`send`, `fresh`, `interrupt`, `command`) carries `expectIncarnation`: the caller's
+(`send`, `fresh`, `interrupt`, `command`, `model`) carries `expectIncarnation`: the caller's
 own (a spawn handshake's), else the incarnation its `hello` just named
 (`fencedHello`). The extension refuses another incarnation before dispatching
 (`incarnation mismatch`, nothing delivered, `AgentReplacedError`), so a
@@ -81,7 +82,7 @@ is fatal, never "unknown, poll it"). `abortAgent`'s own wait carries the
 status's incarnation too.
 
 These back `mu agent send` (`--fresh`, `--steer`, `--interrupt`, session commands), `mu wait` and `mu agent wait`,
-`mu agent abort`, the agent state reading, and `mu_delegate`.
+`mu agent abort`, `mu agent model`, the agent state reading, and `mu_delegate`.
 
 ## Version skew
 
