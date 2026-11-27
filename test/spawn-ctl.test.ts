@@ -442,7 +442,8 @@ describe("spawn records its spawner (agents.spawner)", () => {
     asManaged("orch-ws", "orch");
     await spawnAgent(db, { name: "worker-1", workstream: "auth" });
     const envs = newSessionArgs().flatMap((a, i, args) => (args[i - 1] === "-e" ? [a] : []));
-    expect(envs.some((e) => e.startsWith("PI_SESSION_ID"))).toBe(false);
+    // Never the parent's value: pinned empty so the tmux server's copy cannot reach it either.
+    expect(envs.filter((e) => e.startsWith("PI_SESSION_ID"))).toEqual(["PI_SESSION_ID="]);
     expect(envs).toContain("MU_AGENT_NAME=worker-1");
     expect(envs).toContain("MU_WORKSTREAM=auth");
   });
@@ -479,7 +480,7 @@ describe("spawn control socket", () => {
     expect(agent.ctl).toBe("skipped");
   });
 
-  it("injects exactly the seven identity keys, pi's pinned channel and blank provenance, with no MU_* var set in the caller", async () => {
+  it("injects exactly the seven identity keys, pi's pinned channel, blank role/routing markers and blank provenance, with no MU_* var set in the caller", async () => {
     process.env.MU_SPAWN_CTL_MS = "0";
     // The caller has no MU_* var of its own: the injected values come from mu, not from inheritance.
     const stripped = Object.entries(process.env).filter(
@@ -497,18 +498,38 @@ describe("spawn control socket", () => {
         ),
       );
       expect(Object.keys(env).sort()).toEqual([
+        "MULE_PI_JOB_PREFIX",
         "MU_ACTOR_ANCHOR",
         "MU_ACTOR_SESSION",
+        "MU_AGENT",
         "MU_AGENT_CLI",
         "MU_AGENT_NAME",
         "MU_CTL_SOCK",
         "MU_DB_PATH",
+        "MU_DELEGATE",
+        "MU_HOST",
         "MU_MANAGED_AGENT",
+        "MU_ORCHESTRATOR",
         "MU_PI_CHANNEL",
+        "MU_REMOTE",
+        "MU_REMOTE_KEY",
         "MU_STATE_DIR",
         "MU_WORKSTREAM",
+        "PI_SESSION_FILE",
+        "PI_SESSION_ID",
       ]);
       expect(env).toMatchObject({
+        // Pinned empty: a tmux server born in a pi session (or an rc) must not hand the
+        // worker its spawner's role, routing or pi session (provenance falls through to it).
+        MU_ORCHESTRATOR: "",
+        MU_DELEGATE: "",
+        MU_REMOTE: "",
+        MU_REMOTE_KEY: "",
+        MU_AGENT: "",
+        MU_HOST: "",
+        MULE_PI_JOB_PREFIX: "",
+        PI_SESSION_ID: "",
+        PI_SESSION_FILE: "",
         // Pinned empty, so the pane never inherits `hooks` from the tmux server (spec D15).
         MU_PI_CHANNEL: "",
         // Pinned empty: provenance is the worker's own session, never the tmux server's.

@@ -688,14 +688,24 @@ async function spawnPreparedAgent(
           MU_AGENT_NAME: opts.name,
           MU_WORKSTREAM: opts.workstream,
           MU_AGENT_CLI: harness ?? cli,
-          ...(opts.orchestrator === true ? { MU_ORCHESTRATOR: "1" } : {}),
-          // tmux may inherit a caller's markers. This pane is a worker on the DB's machine.
-          ...(muleProfile !== undefined ? { MU_REMOTE: "", MU_ORCHESTRATOR: "" } : {}),
+          // tmux's server env (or Rex's rc) may carry a caller's role and routing markers.
+          // This pane is a worker on the DB's machine unless spawned as an orchestrator.
+          MU_ORCHESTRATOR: opts.orchestrator === true ? "1" : "",
+          MU_DELEGATE: "",
+          MU_REMOTE: "",
+          MU_REMOTE_KEY: "",
+          MU_AGENT: "",
+          MU_HOST: "",
+          // Set again for a mule job below; never a caller's.
+          [MULE_JOB_PREFIX_ENV]: "",
           // Provenance is the worker's own: its pi's bash tool sets PI_SESSION_ID,
-          // its extension MU_ACTOR_*. One inherited from tmux's server or rc
-          // would win and credit the spawner's session.
+          // its extension MU_ACTOR_*. One inherited from tmux's server or rc would
+          // win (MU_ACTOR_* empty falls through to PI_SESSION_*) and credit the
+          // spawner's session to a non-pi harness.
           MU_ACTOR_SESSION: "",
           MU_ACTOR_ANCHOR: "",
+          PI_SESSION_ID: "",
+          PI_SESSION_FILE: "",
           [CTL_SOCK_ENV]: ctlSocket,
           MU_DB_PATH: resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath()),
           MU_STATE_DIR: resolve(defaultStateDir()),
@@ -897,12 +907,6 @@ async function spawnPreparedAgent(
         const env =
           mux.name === "rex" && profile === undefined
             ? {
-                MU_AGENT: "",
-                MU_HOST: "",
-                MU_REMOTE: "",
-                MU_REMOTE_KEY: "",
-                MU_ORCHESTRATOR: "",
-                MU_DELEGATE: "",
                 MU_PI_CHANNEL: "",
                 ...paneEnv,
                 MU_MUX: "rex",

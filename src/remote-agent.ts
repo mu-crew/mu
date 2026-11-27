@@ -49,6 +49,7 @@ export const LOCAL_ONLY_ENV = [
   // An orchestrator's flag and harness never reach a remote worker (spec D9): a hook harness
   // worker's own harness and remote key travel in `{env}` instead (spec D11).
   "MU_ORCHESTRATOR",
+  "MU_DELEGATE",
   "MU_AGENT_CLI",
   "MU_REMOTE_KEY",
   "MU_REMOTE",
@@ -56,7 +57,10 @@ export const LOCAL_ONLY_ENV = [
   // Provenance names the session that ran the verb: the remote worker's own.
   "MU_ACTOR_SESSION",
   "MU_ACTOR_ANCHOR",
+  "PI_SESSION_ID",
+  "PI_SESSION_FILE",
   "PI_CODING_AGENT_SESSION_DIR",
+  "MULE_PI_JOB_PREFIX",
 ] as const;
 
 /**

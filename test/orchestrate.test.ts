@@ -130,7 +130,8 @@ describe("mu orchestrate", () => {
       await spawnAgent(db, { name: "worker-1", workstream: "auth" });
     });
     const worker = paneEnv("worker-1");
-    expect(worker.MU_ORCHESTRATOR).toBeUndefined();
+    // Pinned empty, so a tmux server carrying MU_ORCHESTRATOR=1 cannot hand it on.
+    expect(worker.MU_ORCHESTRATOR).toBe("");
     expect(worker.MU_MANAGED_AGENT).toBe("1");
     expect(worker).toMatchObject({ MU_ACTOR_SESSION: "", MU_ACTOR_ANCHOR: "" });
     expect(delegateEnabled(worker)).toBe(false);
@@ -148,6 +149,9 @@ describe("mu orchestrate", () => {
     expect(delegateEnabled(child)).toBe(false);
     // A remote pane unsets it too.
     expect(LOCAL_ONLY_ENV).toContain("MU_ORCHESTRATOR");
+    for (const k of ["MU_DELEGATE", "PI_SESSION_ID", "PI_SESSION_FILE", "MULE_PI_JOB_PREFIX"]) {
+      expect(LOCAL_ONLY_ENV).toContain(k);
+    }
   });
 
   it("takes the next free name when none is given, and a named one exactly", async () => {
