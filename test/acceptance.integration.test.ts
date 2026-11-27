@@ -219,7 +219,7 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
     // natural key. The prose `task status ... evidence="..."` event is gone.
     const specsCloseOp = listLogs(db, { workstream })
       .reverse()
-      .find((row) => row.intent === "task.close" && row.workstreamName === `${workstream}/specs`);
+      .find((row) => row.intent === "task.close" && row.key === `${workstream}/specs`);
     expect(specsCloseOp).toBeDefined();
 
     // ── After closing specs: api and ui both become ready ────────────

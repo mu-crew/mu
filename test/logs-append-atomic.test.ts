@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
-import { appendLog } from "../src/logs.js";
+import { appendLog, listLogs } from "../src/logs.js";
 import { rmFixtureDir } from "./_fs.js";
 
 let tempDir: string;
@@ -89,5 +89,18 @@ describe("appendLog clock + insert atomicity", () => {
     const byHlc = [...bySeq].sort((x, y) => (x.hlc < y.hlc ? -1 : 1));
     expect(bySeq.map((r) => r.payload)).toEqual(byHlc.map((r) => r.payload));
     expect(inWindow).toBe("busy");
+  });
+});
+
+describe("appendLog result agrees with listLogs", () => {
+  it("workstreamName is the workstream parsed from the key", () => {
+    const x = appendLog(a, { workstream: "crew-rex/x#1", source: "u", payload: "p" });
+    const y = appendLog(a, { workstream: null, source: "u", payload: "q" });
+    const rows = listLogs(a, {});
+    for (const r of [x, y]) {
+      const l = rows.find((z) => z.seq === r.seq);
+      expect(l?.key).toBe(r.key);
+      expect(l?.workstreamName).toBe(r.workstreamName);
+    }
   });
 });

@@ -4,8 +4,9 @@
 // Pure (no I/O, no DB). One op is ONE text record on ONE line (escaped, at most
 // RECORD_CHARS characters), or one JSON item keyed by the `ops` column names
 // (`key`, `actor`, `entity`, `group_id`, `created_at`; `rendered` is the prose of
-// the one formatter). The SDK's `LogRow` and `renderOp`'s input keep their names:
-// this adapter maps them at the CLI edge, and raw op rows are never rewritten.
+// the one formatter). The SDK's `LogRow` (`key` is the raw op key, `workstreamName` its
+// workstream) and `renderOp`'s input (`key`) keep their names: this adapter
+// maps them at the CLI edge, and raw op rows are never rewritten.
 //
 // A page is bounded on its FINAL bytes (RESULT_BYTES, envelope included). A cut
 // is counted (`more=N` records left out, `cut=N` characters clipped) and names

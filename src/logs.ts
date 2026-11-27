@@ -431,7 +431,7 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
   return {
     seq: Number(result.lastInsertRowid),
     key,
-    workstreamName: opts.workstream,
+    workstreamName: parseOpKey(key).workstream ?? null,
     source: opts.source,
     intent: opts.intent ?? null,
     group,
