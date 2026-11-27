@@ -636,7 +636,8 @@ const PASTE_SETTLE_MS = 150;
  */
 export async function sendToPane(paneId: string, text: string): Promise<void> {
   const sessionId = await requireBlockSession(paneId, "send");
-  if (text.includes("\n")) {
+  // A bare CR submits early just as a LF does.
+  if (/[\r\n]/.test(text)) {
     const modes = await blockMethod(sessionId, paneId, "modes");
     const bracketed = asArray(modes?.modes).some(
       (m) => isRecord(m) && m.number === 2004 && m.set === true,
@@ -674,7 +675,7 @@ export async function capture(paneId: string, opts: CaptureOptions = {}): Promis
   if (opts.lines === undefined) return text;
   if (opts.lines === 0) {
     const size = await blockMethod(sessionId, paneId, "size");
-    const rows = typeof size?.rows === "number" ? size.rows : DETACHED_SIZE.rows;
+    const rows = typeof size?.rows === "number" && size.rows > 0 ? size.rows : DETACHED_SIZE.rows;
     return text.split("\n").slice(-rows).join("\n");
   }
   return lastLines(text, opts.lines);

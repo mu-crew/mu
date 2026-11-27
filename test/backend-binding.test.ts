@@ -275,6 +275,8 @@ describe("verbs on a retired herdr row", () => {
     mux = installMux(active, empty(active));
     const r = await closeAgent(db, "h", { workstream: "auth", force: true });
     expect(r.deletedRow).toBe(true);
+    // Nothing was killed: the herdr pane is out of reach.
+    expect(r.killedPane).toBe(false);
     expect(getAgent(db, "h", "auth")).toBeUndefined();
     expect(getTask(db, "job", "auth")).toMatchObject({ status: "OPEN", ownerId: null });
     untouched();

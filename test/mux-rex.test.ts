@@ -411,6 +411,12 @@ describe("rex send, capture, attach", () => {
     expect(mux.calls.some((c) => c[2] === "block.event")).toBe(false);
   });
 
+  it("refuses a bare carriage return too when the program has no bracketed paste", async () => {
+    mux = installMux("rex", sendRoutes(false));
+    await expect(sendToPane(BID, "a\rb")).rejects.toThrow(/bracketed paste/);
+    expect(mux.calls.some((c) => c[2] === "block.event")).toBe(false);
+  });
+
   it("a send to a gone block throws", async () => {
     mux = installMux("rex", [["api call target.resolve", UNRESOLVED]]);
     await expect(sendToPane(BID, "hi")).rejects.toBeInstanceOf(RexError);
@@ -430,6 +436,18 @@ describe("rex send, capture, attach", () => {
     mux.restore();
     mux = routes("a\nb\nc");
     expect(await capture(BID, { lines: 0 })).toBe("b\nc");
+  });
+
+  it("a screen capture of a block reporting 0 rows falls back to the detached size", async () => {
+    const all = Array.from({ length: 200 }, (_, i) => `l${i}`).join("\n");
+    mux = installMux("rex", [
+      ["api call target.resolve", RESOLVED],
+      ["api call block.method", json({ rows: 0, columns: 80 })],
+      ["capture", all],
+    ]);
+    const screen = (await capture(BID, { lines: 0 })).split("\n");
+    expect(screen.length).toBeLessThan(200);
+    expect(screen.at(-1)).toBe("l199");
   });
 
   it("attaches by asking the app to select the session and window", async () => {

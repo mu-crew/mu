@@ -590,11 +590,15 @@ async function closeLocked(
   // to name: nothing to kill.
   // A pane another tmux server holds under the row's id is not the agent's: never killed.
   // The identity rides in the kill itself (one tmux call): no restart can land between check and kill.
+  // Only a kill issued on a pane counts: a retired, pending or forced mux-less close killed none.
+  let killedPane = false;
   if (
     !retired &&
+    !isPendingPaneId(agent.paneId) &&
     getAgentForCleanup(db, name, opts.workstream) !== undefined &&
     mux !== undefined
   ) {
+    killedPane = true;
     await killView(mux, agent.paneId, agent.paneIdentity).catch(() => {
       /* idempotent — pane may already be gone, or the mux with it */
     });
@@ -739,7 +743,7 @@ async function closeLocked(
     await resolveActorIdentity(),
   );
   return {
-    killedPane: true,
+    killedPane,
     deletedRow,
     worktree,
     ...(lease === undefined ? {} : { carrierJobs: [closedJob(lease)] }),
