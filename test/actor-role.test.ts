@@ -266,7 +266,7 @@ describe("actor_role", () => {
       expect(resolveActorRole(db, { intent: "task.add", workstream: "target-ws" }, paneEnv)).toBe(
         "delegate",
       );
-      // A same-named agent that does not own a delegate call stays a worker.
+      // Another agent of the workstream that owns no delegate call stays a worker.
       insertAgent(db, { name: "w2", workstream: "scratch", paneId: "%8" });
       expect(
         resolveActorRole(
@@ -275,6 +275,32 @@ describe("actor_role", () => {
           { ...paneEnv, MU_AGENT_NAME: "w2" },
         ),
       ).toBe("worker");
+      // A same-named agent of another workstream owning the call does not make scratch/w1 one.
+      ensureWorkstream(db, "other");
+      const { call: call2 } = registerDelegateCall(db, {
+        callId: "pi:orch:c2",
+        caller: "pi:orch",
+        workstream: "scratch",
+        request: { text: "check", label: "rev2" },
+      });
+      markDelegate(db, call2.callId, "starting");
+      insertAgent(db, { name: "w1", workstream: "other", paneId: "%7" });
+      await claimTask(db, call2.task, {
+        workstream: "scratch",
+        agentName: "w1",
+        agentWorkstream: "other",
+      });
+      insertAgent(db, { name: "w1", workstream: "scratch", paneId: "%6" });
+      const w1Env = { ...paneEnv, MU_AGENT_NAME: "w1" };
+      expect(resolveActorRole(db, { intent: "task.note", workstream: "scratch" }, w1Env)).toBe(
+        "worker",
+      );
+      // The delegate's row deleted and its name reused: the new agent owns no call.
+      deleteAgent(db, "delegate-rev", "scratch");
+      insertAgent(db, { name: "delegate-rev", workstream: "scratch", paneId: "%5" });
+      expect(resolveActorRole(db, { intent: "task.note", workstream: "scratch" }, paneEnv)).toBe(
+        "worker",
+      );
     } finally {
       db.close();
     }

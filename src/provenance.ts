@@ -123,7 +123,7 @@ function isRegisteredAgent(db: Db, workstream: string, name: string): boolean {
 // a pane delegate runs as `delegate-<stem>` and owns the call task (spawned
 // with `--task`), so match the owner too.
 const DELEGATE_CALL_SQL =
-  "SELECT 1 FROM delegate_calls dc JOIN tasks t ON t.id = dc.task_id JOIN workstreams w ON w.id = t.workstream_id LEFT JOIN agents a ON a.id = t.owner_id WHERE w.name = ? AND (t.local_id = ? OR a.name = ?)";
+  "SELECT 1 FROM delegate_calls dc JOIN tasks t ON t.id = dc.task_id JOIN workstreams w ON w.id = t.workstream_id LEFT JOIN agents a ON a.id = t.owner_id AND a.workstream_id = w.id WHERE w.name = ? AND (t.local_id = ? OR a.name = ?)";
 
 function isDelegateCall(db: Db, workstream: string, name: string): boolean {
   try {
