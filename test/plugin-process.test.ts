@@ -226,7 +226,10 @@ describe("typed errors and retries", () => {
 
 describe("timeouts and cancel", () => {
   it("past the deadline: $/cancel, the grace, the group killed; no answer", async () => {
-    const p = await start({ faults: { "link.exec": ["hang"] } });
+    f.set({ faults: { "link.exec": ["hang"] } });
+    // A grace far above the bound below: the stop must end early on EOF, not wait a grace out.
+    s = await startPlugin("fake", f.argv, { graceMs: 1200 });
+    const p = s;
     const t0 = Date.now();
     const err = await exec(p, "echo hi", { timeoutMs: 100 }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(EffectOutcomeUnknownError);
@@ -235,7 +238,7 @@ describe("timeouts and cancel", () => {
     );
     // The fake exits on the stop's EOF, which ends the one grace early.
     expect(Date.now() - t0).toBeGreaterThanOrEqual(100);
-    expect(Date.now() - t0).toBeLessThan(100 + GRACE + 1500);
+    expect(Date.now() - t0).toBeLessThan(100 + 1200);
     const cancel = tapped.find((t) => t.stream === "in" && t.text.includes("$/cancel"));
     expect(JSON.parse(cancel?.text ?? "{}")).toEqual({
       jsonrpc: "2.0",

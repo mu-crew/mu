@@ -178,7 +178,6 @@ describe("rex spawnAgent", () => {
     name: "alice",
     cli: "pi",
     command: "pi --model x",
-    commandSource: "cli-key" as const,
     cwd: "/repo",
     env: { MU_AGENT_NAME: "alice" },
   };

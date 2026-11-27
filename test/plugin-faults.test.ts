@@ -38,6 +38,7 @@ import {
 } from "../src/plugins/registry.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { readCloseLanding } from "../src/worktree.js";
 import { cachedDeadPid } from "./_dead-pid.js";
 import { sleep } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -550,6 +551,20 @@ describe("F11: a provider host lost under its jobs, a crashed release (D1, D16)"
     await releaseHost(db, "box");
     expect(getHostRecord(db, "box")).toBeUndefined();
     expect(f.backend().releases).toBe(1);
+  });
+
+  it("close on a lost host records the landing the recovery knows: repo and base, no HEAD", async () => {
+    await lostJob({}, true);
+    const r = await close();
+    // Other agent.close rows (the carrier job's) carry no landing: read the one that does.
+    const landings = listLogs(db, { limit: 50, intent: "agent.close" })
+      .map((row) => readCloseLanding(row))
+      .filter((l) => l !== null);
+    expect(landings).toHaveLength(1);
+    const landing = landings[0];
+    expect(landing).toMatchObject({ repoRoot: "/work", baseSha: BASE });
+    expect(landing?.headSha ?? null).toBeNull();
+    expect(r.worktree?.landing).toEqual(landing);
   });
 
   it("an outlivesHost job on a lost host is stopped by job.stop with proof before its record goes", async () => {

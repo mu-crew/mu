@@ -26,9 +26,9 @@ import { alive, sleep } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin } from "./_plugin.js";
 
-const GRACE = 300;
-/** Scheduling slack on a loaded host: only a hang (a grace never ending) must exceed it. */
-const SLACK = 1500;
+const GRACE = 1200;
+/** Scheduling slack on a loaded host. Kept below GRACE so a second grace (>= 2 * GRACE) always exceeds a one-grace bound. */
+const SLACK = 1000;
 
 let dir: string;
 let f: FakePlugin;

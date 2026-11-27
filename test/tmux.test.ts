@@ -570,7 +570,6 @@ const SPAWN = {
   name: "worker-1",
   cli: "pi",
   command: "pi",
-  commandSource: "cli-key" as const,
   env: {},
 };
 
