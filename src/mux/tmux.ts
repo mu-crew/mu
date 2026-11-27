@@ -211,6 +211,19 @@ function tmuxCommandWord(arg: string): string {
  * require its pane still in `session`. With neither condition, `args` run as they are.
  */
 function guardedArgs(ref: PaneTarget, args: readonly string[], session?: string): string[] {
+  return guardedCommands(ref, [args], session);
+}
+
+/**
+ * `guardedArgs` for a command sequence, run in one tmux invocation. The `;`
+ * between commands is emitted bare, so tmux splits on it; a `;` inside a
+ * command (a literal key) stays quoted, so it does not.
+ */
+function guardedCommands(
+  ref: PaneTarget,
+  commands: readonly (readonly string[])[],
+  session?: string,
+): string[] {
   const paneId = typeof ref === "string" ? ref : ref.paneId;
   const server = typeof ref === "string" ? undefined : `#{==:#{pid}|#{start_time},${ref.identity}}`;
   const inSession =
@@ -223,13 +236,13 @@ function guardedArgs(ref: PaneTarget, args: readonly string[], session?: string)
       : inSession === undefined
         ? server
         : `#{&&:${server},${inSession}}`;
-  if (condition === undefined) return [...args];
+  if (condition === undefined) return commands.flatMap((c, i) => (i === 0 ? [...c] : [";", ...c]));
   return [
     "if-shell",
     "-F",
     ...(session === undefined ? [] : ["-t", paneId]),
     condition,
-    args.map(tmuxCommandWord).join(" "),
+    commands.map((c) => c.map(tmuxCommandWord).join(" ")).join(" ; "),
     `run-shell "exit ${FOREIGN_SERVER_EXIT}"`,
   ];
 }
@@ -246,8 +259,16 @@ async function execOnPane(
   ref: PaneTarget,
   build: (paneId: string) => readonly string[],
 ): Promise<PaneExec> {
+  return execCommandsOnPane(ref, (id) => [build(id)]);
+}
+
+/** `execOnPane` for a command sequence, guarded once, in one tmux invocation. */
+async function execCommandsOnPane(
+  ref: PaneTarget,
+  build: (paneId: string) => readonly (readonly string[])[],
+): Promise<PaneExec> {
   const paneId = typeof ref === "string" ? ref : ref.paneId;
-  const args = guardedArgs(ref, build(paneId));
+  const args = guardedCommands(ref, build(paneId));
   const result = await currentExecutor(args);
   const foreign = typeof ref !== "string" && result.exitCode === FOREIGN_SERVER_EXIT;
   return { ...result, foreign, args, paneId };
@@ -258,7 +279,15 @@ async function paneTmux(
   ref: PaneRef,
   build: (paneId: string) => readonly string[],
 ): Promise<string> {
-  const r = await execOnPane(paneTarget(ref), build);
+  return paneTmuxCommands(ref, (id) => [build(id)]);
+}
+
+/** `paneTmux` for a command sequence that must run together or not at all. */
+async function paneTmuxCommands(
+  ref: PaneRef,
+  build: (paneId: string) => readonly (readonly string[])[],
+): Promise<string> {
+  const r = await execCommandsOnPane(paneTarget(ref), build);
   if (r.foreign) throw new PaneNotFoundError(r.paneId);
   if (r.exitCode !== 0) throw new TmuxError(r.args, r.stderr, r.stdout, r.exitCode);
   return r.stdout;
@@ -493,16 +522,8 @@ export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
     const tags = Object.entries(opts.paneOptions ?? {});
     if (tags.length > 0) {
       try {
-        await paneTmux(ref, (id) =>
-          tags.flatMap(([name, value], i) => [
-            ...(i === 0 ? [] : [";"]),
-            "set-option",
-            "-p",
-            "-t",
-            id,
-            name,
-            value,
-          ]),
+        await paneTmuxCommands(ref, (id) =>
+          tags.map(([name, value]) => ["set-option", "-p", "-t", id, name, value]),
         );
       } catch {
         // untagged is still a working pane
