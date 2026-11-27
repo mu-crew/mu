@@ -250,10 +250,18 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
       | undefined;
     if (!identity) throw new Error(say("rebuild.no_identity"));
 
+    // A read-only source predating an additive provenance column (openDb readonly skips
+    // upgradeSchema) reads it as NULL, as src/logs.ts does.
+    const opsCols = new Set(
+      (source.prepare("PRAGMA table_info(ops)").all() as { name: string }[]).map((c) => c.name),
+    );
+    const prov = ["actor_session", "actor_anchor", "actor_role"]
+      .map((c) => (opsCols.has(c) ? c : `NULL AS ${c}`))
+      .join(", ");
     const opRows = source
       .prepare(
         `SELECT hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at,
-                actor_session, actor_anchor, actor_role
+                ${prov}
            FROM ops`,
       )
       .all() as RawOpRow[];

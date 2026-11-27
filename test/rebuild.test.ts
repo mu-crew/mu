@@ -181,6 +181,29 @@ describe("rebuildInto", () => {
       );
     });
 
+    it("a read-only source predating actor_role rebuilds, the role read as NULL", async () => {
+      await withEnv("MU_ACTOR_SESSION", "pi:sess-1", async () => {
+        ensureWorkstream(db, "demo");
+        addTask(db, { workstream: "demo", localId: "a", title: "A" });
+      });
+      // The pre-column shape: openDb readonly skips upgradeSchema, so the column stays missing.
+      const triggers = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+        .all() as { name: string }[];
+      for (const t of triggers) db.exec(`DROP TRIGGER "${t.name}"`);
+      db.exec("ALTER TABLE ops DROP COLUMN actor_role");
+      db.exec("ALTER TABLE op_ctx DROP COLUMN actor_role");
+      db.close();
+      db = openDb({ path: sourcePath, readonly: true });
+      const path = targetPath();
+      const report = rebuildInto(db, { targetPath: path });
+      expect(report.opsCopied).toBeGreaterThan(0);
+      const rows = withTarget(path, (conn) =>
+        conn.prepare("SELECT actor_session, actor_role FROM ops").all(),
+      );
+      expect(rows).toContainEqual({ actor_session: "pi:sess-1", actor_role: null });
+    });
+
     it("rebuilds an empty DB without error", () => {
       const path = targetPath();
       const report = rebuildInto(db, { targetPath: path });
