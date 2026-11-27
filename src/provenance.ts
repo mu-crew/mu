@@ -119,12 +119,15 @@ function isRegisteredAgent(db: Db, workstream: string, name: string): boolean {
   }
 }
 
+// A headless delegate runs under the call task's id (src/delegate-process.ts);
+// a pane delegate runs as `delegate-<stem>` and owns the call task (spawned
+// with `--task`), so match the owner too.
 const DELEGATE_CALL_SQL =
-  "SELECT 1 FROM delegate_calls dc JOIN tasks t ON t.id = dc.task_id JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = ? AND t.local_id = ?";
+  "SELECT 1 FROM delegate_calls dc JOIN tasks t ON t.id = dc.task_id JOIN workstreams w ON w.id = t.workstream_id LEFT JOIN agents a ON a.id = t.owner_id WHERE w.name = ? AND (t.local_id = ? OR a.name = ?)";
 
-function isDelegateCall(db: Db, workstream: string, taskLocalId: string): boolean {
+function isDelegateCall(db: Db, workstream: string, name: string): boolean {
   try {
-    return prepareCached(db, DELEGATE_CALL_SQL).get(workstream, taskLocalId) !== undefined;
+    return prepareCached(db, DELEGATE_CALL_SQL).get(workstream, name, name) !== undefined;
   } catch {
     return false;
   }

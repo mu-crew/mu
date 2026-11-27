@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deleteAgent, insertAgent } from "../src/agents.js";
 import { openDb } from "../src/db.js";
-import { registerDelegateCall } from "../src/delegates.js";
+import { markDelegate, registerDelegateCall } from "../src/delegates.js";
 import { writeEffect } from "../src/effects.js";
 import * as sdk from "../src/index.js";
 import { appendLog, emitEvent, listLogs, listSessionRoles } from "../src/logs.js";
@@ -234,6 +234,47 @@ describe("actor_role", () => {
         workstream: "other",
         role: "delegate",
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("identifies a pane delegate (agent delegate-<stem> owning the call task) without MU_DELEGATE", async () => {
+    const db = openDb({ path: join(dir, "mu.db") });
+    try {
+      ensureWorkstream(db, "scratch");
+      const { call } = registerDelegateCall(db, {
+        callId: "call-pane",
+        caller: "pi:orch",
+        workstream: "scratch",
+        request: { text: "check", label: "rev" },
+      });
+      markDelegate(db, call.callId, "starting");
+      insertAgent(db, { name: "delegate-rev", workstream: "scratch", paneId: "%9" });
+      await claimTask(db, call.task, { workstream: "scratch", agentName: "delegate-rev" });
+      // src/agents/spawn.ts clears MU_DELEGATE for pane agents.
+      const paneEnv = {
+        MU_ACTOR_SESSION: "pi:del-pane-1",
+        MU_MANAGED_AGENT: "1",
+        MU_DELEGATE: "",
+        MU_WORKSTREAM: "scratch",
+        MU_AGENT_NAME: "delegate-rev",
+      };
+      expect(resolveActorRole(db, { intent: "task.note", workstream: "scratch" }, paneEnv)).toBe(
+        "delegate",
+      );
+      expect(resolveActorRole(db, { intent: "task.add", workstream: "target-ws" }, paneEnv)).toBe(
+        "delegate",
+      );
+      // A same-named agent that does not own a delegate call stays a worker.
+      insertAgent(db, { name: "w2", workstream: "scratch", paneId: "%8" });
+      expect(
+        resolveActorRole(
+          db,
+          { intent: "task.note", workstream: "scratch" },
+          { ...paneEnv, MU_AGENT_NAME: "w2" },
+        ),
+      ).toBe("worker");
     } finally {
       db.close();
     }
