@@ -11,6 +11,7 @@ import {
   reportPendingPaneOption,
   setPaneOptionRunnerForTests,
 } from "../extension/delegate-pane-option.js";
+import { listDelegates } from "../src/delegates.js";
 import { fakeMu, fakePi, flush, installDelegateEnv, ok, tool } from "./_delegate-fixtures.js";
 
 /** Run `fn` with $TMUX/$TMUX_PANE as given (undefined: unset); _setup clears both. */
@@ -187,17 +188,21 @@ describe("@mu_pending pane option", () => {
     });
   });
 
-  it("the delegate tool sets it while a delegate is out and unsets it when it answers", async () => {
+  it("the delegate tool sets it while a delegate is out and unsets it once the settle shows the answer", async () => {
     await withEnv(inTmux, async () => {
       const seen = await claimed();
       const mu = fakeMu();
       const p = fakePi();
-      registerDelegate(p.pi, mu.run);
+      const handle = registerDelegate(p.pi, mu.run);
       await tool(p).execute("t", { task: "x" });
       await flush();
       expect(seen).toEqual([set(1)]);
       mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "error", lastError: "x" }] }));
       await flush();
+      await flush();
+      // Answered and woken for: still owed to the transcript until a settle acks it (fsj U4).
+      expect(seen).toEqual([set(1)]);
+      handle.delivered(listDelegates(mu.db).map((c) => c.callId));
       await flush();
       expect(seen).toEqual([set(1), unset]);
     });

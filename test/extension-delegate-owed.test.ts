@@ -11,7 +11,7 @@ import {
   setPaneOptionRunnerForTests,
 } from "../extension/delegate-pane-option.js";
 import { listDelegates } from "../src/delegates.js";
-import { cursorKey, recordCursors, SETTLE_TOKEN } from "../src/wait-cursor.js";
+import { DELEGATE_TOKEN, recordCursors, settleKey } from "../src/wait-cursor.js";
 import { fakeMu, fakePi, flush, installDelegateEnv, ok, tool } from "./_delegate-fixtures.js";
 
 installDelegateEnv();
@@ -118,6 +118,74 @@ describe("owed survives an interrupt", () => {
   });
 });
 
+/** One delegate answered while pi is idle: woken, and the wake entered the conversation. */
+async function answeredIdle() {
+  const mu = fakeMu();
+  const p = fakePi();
+  const handle = registerDelegate(p.pi, mu.run);
+  await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
+  mu.waits
+    .get("delegate-2")
+    ?.resolve(ok({ agents: [{ outcome: "done", lastText: "the answer" }] }));
+  await ticks();
+  const callId = listDelegates(mu.db)[0]?.callId ?? "";
+  return { mu, p, handle, callId };
+}
+
+describe("owed survives an interrupt of the wake's own turn", () => {
+  it("the wake entered, Esc / ctl abort before its settle: owed and @mu_pending kept, noted; the next turn wakes again", async () => {
+    const seen = await claimed();
+    const { p, handle, callId } = await answeredIdle();
+    expect(wakes(p)).toHaveLength(1); // idle: woken; its pointer is in the conversation
+    expect(seen).toEqual([set(1)]); // no settle has shown the report yet
+    await p.fire("agent_start", {});
+    await settled(p, true); // the interrupt, inside the wake's turn
+    const note = p.sendMessage.mock.calls.at(-1);
+    expect((note?.[0] as { content?: string } | undefined)?.content).toMatch(
+      /^Interrupted: 1 delegate answer/,
+    );
+    await ticks();
+    expect(seen).toEqual([set(1)]);
+    // The user prompts again; that turn's settle did not show it: woken for once more.
+    await p.fire("agent_start", {});
+    await settled(p);
+    expect(wakes(p)).toHaveLength(2);
+    expect(JSON.stringify(wakes(p)[1]?.[0])).toContain(callId);
+    // That wake's settle shows it: acked, no longer counted.
+    handle.delivered([callId]);
+    await ticks();
+    expect(seen).toEqual([set(1), unset]);
+  });
+
+  it("a completed wake turn whose settle did not show it: counted, never woken again (no loop)", async () => {
+    const seen = await claimed();
+    const { p, handle } = await answeredIdle();
+    await p.fire("agent_start", {});
+    await settled(p);
+    await ticks();
+    expect(wakes(p)).toHaveLength(1);
+    expect(seen).toEqual([set(1)]);
+    // A later settle that finds nothing owed acks it.
+    handle.delivered({ before: Date.now() + 1 });
+    await ticks();
+    expect(seen).toEqual([set(1), unset]);
+  });
+
+  it("MU_NUDGE=0: no settle wait, so the wake entering the conversation is the delivery", async () => {
+    process.env.MU_NUDGE = "0";
+    try {
+      const seen = await claimed();
+      const { p } = await answeredIdle();
+      await ticks();
+      expect(wakes(p)).toHaveLength(1);
+      expect(seen).toEqual([set(1), unset]);
+    } finally {
+      const k = "MU_NUDGE";
+      delete process.env[k];
+    }
+  });
+});
+
 describe("a reload re-adopts the answers no settle delivered", () => {
   it("re-adopted, @mu_pending restored, woken; a settled one is not", async () => {
     const seen = await claimed();
@@ -140,7 +208,7 @@ describe("a reload re-adopts the answers no settle delivered", () => {
     // Once a settle wait delivered it into the transcript, the next runtime owes nothing.
     const c = listDelegates(mu.db)[0];
     recordCursors(mu.db, "pi:s1", [
-      { key: cursorKey("delegate", c?.workstream ?? "", callId), token: SETTLE_TOKEN },
+      { key: settleKey(c?.workstream ?? "", callId), token: DELEGATE_TOKEN },
     ]);
     const third = fakePi();
     registerDelegate(third.pi, mu.run);

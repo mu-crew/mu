@@ -75,7 +75,7 @@ import {
 import { say } from "./messages.js";
 import { defaultStateDir, refusePendingStateImport, xdgStateHome } from "./state-dir.js";
 import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
-import { adoptSettleLane } from "./wait-cursor.js";
+import { adoptSettleLane, settleLaneAdopted } from "./wait-cursor.js";
 
 export {
   BLOCKED_VIEW_SQL,
@@ -772,6 +772,7 @@ function schemaIsCurrent(db: Db): boolean {
   if (carrierJobsStopRequired(db)) return false;
   if (spawnReceiptsChecked(db)) return false;
   if (taskNotesLacksReview(db)) return false;
+  if (!settleLaneAdopted(db)) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
   for (const [name, sql] of expected.views) {
     if (have.get(`view:${name}`) !== sql) return false;

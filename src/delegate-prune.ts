@@ -44,6 +44,7 @@ import type { FleetHazard } from "./fleet-hazards.js";
 import { withOpContext } from "./op-context.js";
 import { localMachineId } from "./segments.js";
 import { syncEnabled } from "./sync.js";
+import { cursorKey, settleKey } from "./wait-cursor.js";
 
 /** Default age, in days, past which a closed delegate task is pruned. */
 export const PRUNE_DEFAULT_DAYS = 30;
@@ -273,13 +274,16 @@ export function pruneDelegates(
         const me = localMachineId(db);
         const own = plan.ownHistory ? 1 : 0;
         // A wait's consumed-call cursor names the call; it has nothing left to hide.
-        const cursor = db.prepare("DELETE FROM wait_cursors WHERE ref = ?");
+        const cursor = db.prepare("DELETE FROM wait_cursors WHERE ref IN (?, ?)");
         for (const c of plan.candidates) {
           if (del.run(plan.cutoff, c.task, c.workstream).changes === 0) continue;
           tasks++;
           pruned.push(c);
           ops += puts.run({ k: `${c.workstream}/${c.task}`, own, me }).changes;
-          cursor.run(`delegate:${c.workstream}/${c.callId}`);
+          cursor.run(
+            cursorKey("delegate", c.workstream, c.callId),
+            settleKey(c.workstream, c.callId),
+          );
         }
       })
       .immediate(),

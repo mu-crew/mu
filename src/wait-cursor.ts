@@ -9,11 +9,12 @@
 //             the run of a new process.
 //   task      `closed` + the id of the task's newest note. A re-close
 //             writes a newer note, so a reopened-and-closed task is news.
-//   delegate  `delegate` + 1: a call reaches a terminal state once. The
-//             settle lane (pi's settle wait, `MU_WAIT_SETTLE=1`) consumes
-//             it as `delegate` + 2: the answer reached the transcript. A
-//             shell wait's 1 never hides an answer from the settle lane;
-//             the settle's 2 hides it from the shell too.
+//   delegate  `delegate` + 1: a call reaches a terminal state once.
+//
+// The settle lane (pi's settle wait, `MU_WAIT_SETTLE=1`) keeps its own
+// delegate cursor under the same caller, `settle|delegate:<ws>/<id>`: the
+// answer reached the transcript. A shell `mu wait` writes only the plain key,
+// the settle lane only its own, so each sees every answer once.
 //
 // A token is written only for an event the wait DELIVERED. Registering a
 // ref or starting a wait never writes one, and a sibling that a `first`
@@ -44,30 +45,44 @@ export const doneKey = (workstream: string, name: string): string =>
   `done|${cursorKey("agent", workstream, name)}`;
 
 export const DELEGATE_TOKEN: CursorToken = { incarnation: "delegate", runs: 1 };
-/** A delegate answer the settle lane delivered into the caller's transcript (see the file comment). */
-export const SETTLE_TOKEN: CursorToken = { incarnation: "delegate", runs: 2 };
+
+/** The settle lane's cursor key of a delegate call (see the file comment). */
+export const settleKey = (workstream: string, callId: string): string =>
+  `settle|${cursorKey("delegate", workstream, callId)}`;
 
 /**
- * The settle lane's adoption mark: bit 0 of SQLite's `PRAGMA user_version`, which mu uses for
- * nothing else (the schema stamp is its own table). A header field, so no row any table counts.
+ * The settle lane's adoption mark: bit 1 of SQLite's `PRAGMA user_version`, which mu uses for
+ * nothing else (the schema stamp is its own table): a header field, so no row any table counts, and
+ * an older mu reads the file as before. Bit 0 marks a pre-release build of the lane that kept one
+ * key per call (`delegate` + 2 = shown in the transcript).
  */
-const SETTLE_LANE_BIT = 1;
+const SETTLE_LANE_BIT = 2;
+const PRE_RELEASE_LANE_BIT = 1;
 
-const laneAdopted = (db: Db): boolean =>
-  ((db.pragma("user_version", { simple: true }) as number) & SETTLE_LANE_BIT) !== 0;
+const userVersion = (db: Db): number => db.pragma("user_version", { simple: true }) as number;
+
+/** openDb's check (src/db.ts schemaIsCurrent): a DB this build has not adopted is upgraded. */
+export const settleLaneAdopted = (db: Db): boolean => (userVersion(db) & SETTLE_LANE_BIT) !== 0;
 
 /**
  * Once per DB, inside openDb's upgrade transaction (so before any wait of this build): every
- * delegate token an older mu wrote (`delegate` + 1, by a shell wait or by the settle alike) counts
- * as delivered to the transcript, so the lane never replays history. After the mark, a 1 is a
- * shell wait's alone. Idempotent.
+ * delegate answer an older mu consumed (one key for the shell and the settle alike) counts as
+ * shown in the transcript too, so the lane never replays history. Idempotent.
  */
 export function adoptSettleLane(db: Db): void {
-  if (laneAdopted(db)) return;
+  const v = userVersion(db);
+  if ((v & SETTLE_LANE_BIT) !== 0) return;
+  const preRelease = (v & PRE_RELEASE_LANE_BIT) !== 0;
+  // The pre-release build's `delegate` + 2 was the settle's; its later + 1 a shell wait's alone.
   db.prepare(
-    "UPDATE wait_cursors SET runs = ? WHERE incarnation = ? AND runs = ? AND ref LIKE 'delegate:%'",
-  ).run(SETTLE_TOKEN.runs, DELEGATE_TOKEN.incarnation, DELEGATE_TOKEN.runs);
-  const v = db.pragma("user_version", { simple: true }) as number;
+    `INSERT OR IGNORE INTO wait_cursors (caller, ref, incarnation, runs)
+       SELECT caller, 'settle|' || ref, incarnation, runs FROM wait_cursors
+        WHERE ref LIKE 'delegate:%' AND incarnation = ? AND runs >= ?`,
+  ).run(DELEGATE_TOKEN.incarnation, preRelease ? 2 : DELEGATE_TOKEN.runs);
+  if (preRelease)
+    db.prepare(
+      "UPDATE wait_cursors SET runs = ? WHERE incarnation = ? AND runs > ? AND (ref LIKE 'delegate:%' OR ref LIKE 'settle|delegate:%')",
+    ).run(DELEGATE_TOKEN.runs, DELEGATE_TOKEN.incarnation, DELEGATE_TOKEN.runs);
   db.pragma(`user_version = ${v | SETTLE_LANE_BIT}`);
 }
 
@@ -82,9 +97,7 @@ export function settleOwed(
 ): string[] {
   const cursors = readCursors(db, caller);
   return calls.flatMap((c) =>
-    isConsumed(cursors.get(cursorKey("delegate", c.workstream, c.callId)), SETTLE_TOKEN)
-      ? []
-      : [c.callId],
+    isConsumed(cursors.get(settleKey(c.workstream, c.callId)), DELEGATE_TOKEN) ? [] : [c.callId],
   );
 }
 

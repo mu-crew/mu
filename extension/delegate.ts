@@ -270,9 +270,13 @@ export function registerDelegate(
   /** Calls past the cap, FIFO, at most `DELEGATE_QUEUE_FACTOR * delegateMax()` long. */
   const queue: Queued[] = [];
   let queueSeq = 0;
-  /** Answers recorded here that no settle has shown yet and no wake has
-   *  carried into the conversation, by call id. */
-  const owed = new Map<string, WakeAnswer & { at: number; noted?: boolean }>();
+  /** Answers recorded here that no settle has shown yet, by call id. `woken`: a
+   *  wake carried its pointer into the conversation (no second wake; an
+   *  interrupt clears it). `noted`: an interrupt's note named it. */
+  const owed = new Map<string, WakeAnswer & { at: number; noted?: boolean; woken?: boolean }>();
+  /** The settle wait (extension/nudge.ts) delivers the reports and acks them through
+   *  `delivered`; without it (MU_NUDGE=0) a wake entering the conversation is the delivery. */
+  const settleAcks = () => process.env.MU_NUDGE !== "0";
   /** Wakes that have not entered the conversation: being delivered, or queued
    *  behind a running turn. Keyed by a per-wake id carried in the message's
    *  details, cleared on its message_start. `sent`: pi.sendMessage returned (pi
@@ -324,7 +328,7 @@ export function registerDelegate(
    *  answer; its turn's settle delivers the reports. */
   const wake = (why: string) => {
     const covered = new Set([...arriving.values()].flatMap((a) => a.calls));
-    const due = [...owed.values()].filter((a) => !covered.has(a.callId));
+    const due = [...owed.values()].filter((a) => !covered.has(a.callId) && !a.woken);
     if (due.length === 0 || closed) return;
     const id = ++wakeSeq;
     const ids = due.map((a) => a.callId);
@@ -1462,14 +1466,21 @@ export function registerDelegate(
 
   // A wake enters the conversation at its message_start: at once when pi is
   // idle, or when the running turn drains its follow-ups. Its answers are then
-  // in front of the model (as pointers); its turn's settle shows the reports.
+  // in front of the model (as pointers); its turn's settle shows the reports and
+  // acks them (`delivered`), so they stay owed (and counted) until then: an
+  // interrupt in the wake's own turn still finds them.
   pi.on("message_start", (e) => {
     const m = (e as { message?: { role?: unknown; customType?: unknown; details?: unknown } })
       .message;
     if (m?.role !== "custom" || m.customType !== DELEGATE_MESSAGE_TYPE) return;
     const id = (m.details as { wake?: unknown } | undefined)?.wake;
     if (typeof id !== "number") return;
-    for (const c of arriving.get(id)?.calls ?? []) owed.delete(c);
+    for (const c of arriving.get(id)?.calls ?? []) {
+      const a = owed.get(c);
+      if (!a) continue;
+      if (settleAcks()) a.woken = true;
+      else owed.delete(c);
+    }
     arriving.delete(id);
     reportPending();
   });
@@ -1493,7 +1504,10 @@ export function registerDelegate(
       const a = owed.get(c);
       if (!a) continue;
       if (!keep) owed.delete(c);
-      else if (a.noted) continue;
+      else {
+        a.woken = false; // its wake's turn was cut short: a later settle wakes for it again
+        if (a.noted) continue;
+      }
       a.noted = true;
       dropped.push(a);
     }
@@ -1581,7 +1595,7 @@ export function registerDelegate(
     // Answers recorded that no settle has delivered into this transcript (a reload, a quit
     // before the settle, an interrupt): owed again, counted, and woken for while pi is idle.
     // Without the settle wait (MU_NUDGE=0) the wake itself delivers, so nothing is re-adopted.
-    if (process.env.MU_NUDGE !== "0") {
+    if (settleAcks()) {
       for (const row of items) {
         if (row.settleOwed !== true || typeof row.callId !== "string" || owed.has(row.callId))
           continue;

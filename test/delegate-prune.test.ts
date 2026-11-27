@@ -204,9 +204,11 @@ describe("plan", () => {
 describe("prune", () => {
   it("deletes the task, notes, call row, cursor and puts; keeps the verdict on the judged task; drift clean", () => {
     const task = call("old", 31, { record: true });
-    db.prepare(
+    const cursor = db.prepare(
       "INSERT INTO wait_cursors (caller, ref, incarnation, runs) VALUES ('pi:s', ?, 'delegate', 1)",
-    ).run("delegate:scratch/old");
+    );
+    cursor.run("delegate:scratch/old");
+    cursor.run("settle|delegate:scratch/old"); // the settle lane's (src/wait-cursor.ts)
     expect(putsOf(task)).toBeGreaterThan(0);
     const r = pruneDelegates(db, planDelegatePrune(db, { ownHistory: true }));
     expect(r.tasks).toBe(1);

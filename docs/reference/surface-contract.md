@@ -113,6 +113,17 @@ their guarantees:
   `mu task notes` pointer); a wave's waits for its siblings and shows ONE
   summary. The pi message is only a **wake** (a pointer, no answer text)
   when no settle wait will show an answer.
+  The settle wait is the **settle lane** (`MU_WAIT_SETTLE=1` on its own
+  child): its delegate cursors (`settle|delegate:<ws>/<id>`) and its wait
+  generation (the `settle|<caller>` registration row) are its own, so it and
+  a shell `mu wait` of the same session each see every delegate answer once
+  and never supersede each other. An answer stays owed to the transcript
+  (and counted in `@mu_pending`) until a settle shows it: an interrupt (Esc,
+  ctl abort, murmur stop) keeps it, and a reloaded pi re-adopts every done
+  or failed call `mu delegates list --json` marks `settleOwed: true`. The
+  lane is adopted once per DB at open (every delegate answer an older mu
+  consumed counts as shown; mark: bit 1 of `PRAGMA user_version`, which an
+  older mu ignores).
 
 - **Stop hook.** `mu hook stop <harness>` is the settle wait's twin for
   claude, codex and cursor-agent: for an orchestrator pane mu started (an
@@ -179,6 +190,9 @@ delegate's report and close. The full multi-line evidence stays on the
 judged task; the answer is the delegate task's report. Pi echo is
 optional, one summary per wave. Admission control, arriving-answer
 safety and `murmur:pending {source,count}` are unchanged.
+`mu delegates list --json` adds `settleOwed: true` to a done or failed
+call whose answer no settle wait has shown in its caller's transcript
+(absent otherwise).
 
 **Next.** One rule set over current state computes `next` on every
 call (`computeNext`); the dashboard asks the same function. Agents

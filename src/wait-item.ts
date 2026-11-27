@@ -135,8 +135,6 @@ export const delegateItem = (
   isTarget: boolean,
   suppressible: boolean,
   order: number,
-  /** The token a terminal call is consumed as: the settle lane's (SETTLE_TOKEN) or a shell wait's. */
-  token: CursorToken = DELEGATE_TOKEN,
 ): Item => {
   const ref: WaitRef = { kind: "delegate", workstream: call.workstream, id: call.callId };
   const terminal = TERMINAL_DELEGATE_STATES.includes(call.state);
@@ -163,7 +161,7 @@ export const delegateItem = (
   };
   if (terminal) {
     item.kind = "delegate";
-    item.token = token;
+    item.token = DELEGATE_TOKEN;
   }
   return item;
 };

@@ -12,7 +12,11 @@
 //      and marks it `waiting`; `endWait` is a compare-and-set on that
 //      generation, so an older wait that finishes late (or twice) cannot
 //      overwrite a newer one. A wait that died leaves `waiting` behind:
-//      the next `beginWait` simply supersedes it.
+//      the next `beginWait` simply supersedes it. The settle lane (pi's
+//      settle wait) numbers its waits on its own row, `settle|<caller>`
+//      (no refs): a settle wait and a shell `mu wait` of one caller never
+//      supersede each other, and both drop what they deliver from the
+//      caller's row.
 //
 // What this module does NOT do: it never records consumed runs (that is
 // `wait_cursors`, written by the wait that delivers an event), so
@@ -410,15 +414,23 @@ export function dropOwnedRefs(db: Db, caller: string, refs: readonly RegisteredR
   }).immediate();
 }
 
+/** The wait lanes: a shell `mu wait` (the default) and pi's settle wait (src/wait-cursor.ts). */
+export type WaitLane = "shell" | "settle";
+
+/** The row that numbers `lane`'s waits for `caller`: the caller's own, or the settle lane's. */
+const laneRow = (caller: string, lane: WaitLane): string =>
+  lane === "settle" ? `settle|${caller}` : caller;
+
 /**
  * Start a wait for `caller`: bump the generation, mark the row `waiting`,
  * return the generation and the refs owed now. undefined (and nothing
- * written) when the caller owes nothing. An earlier wait still marked
- * `waiting` is superseded: its `endWait` will no longer match.
+ * written) when the caller owes nothing. An earlier wait of the same lane still
+ * marked `waiting` is superseded: its `endWait` will no longer match.
  */
 export function beginWait(
   db: Db,
   caller: string,
+  lane: WaitLane = "shell",
 ):
   | { generation: number; refs: RegisteredRef[]; baselines: Record<string, RefBaseline> }
   | undefined {
@@ -428,10 +440,21 @@ export function beginWait(
       if (row === undefined) return undefined;
       const reg = parse(row);
       if (reg.refs.length === 0) return undefined;
+      const now = new Date().toISOString();
+      if (lane === "settle") {
+        const { generation } = db
+          .prepare(
+            `INSERT INTO wait_registrations (caller, refs_json, state, generation, updated_at) VALUES (?, '[]', 'waiting', 1, ?)
+               ON CONFLICT (caller) DO UPDATE SET state = 'waiting', generation = generation + 1, updated_at = excluded.updated_at
+             RETURNING generation`,
+          )
+          .get(laneRow(caller, lane), now) as { generation: number };
+        return { generation, refs: reg.refs, baselines: reg.baselines };
+      }
       const generation = reg.generation + 1;
       db.prepare(
         "UPDATE wait_registrations SET state = 'waiting', generation = ?, updated_at = ? WHERE caller = ?",
-      ).run(generation, new Date().toISOString(), caller);
+      ).run(generation, now, caller);
       return { generation, refs: reg.refs, baselines: reg.baselines };
     })
     .immediate();
@@ -444,25 +467,28 @@ export interface DeliveredRun {
 }
 
 /**
- * Finish the wait that `beginWait` numbered `generation`: drop the
- * `delivered` refs from what is owed and re-arm the row. A compare-and-set:
- * `applied: false` (and nothing written) when the row is gone, a newer wait
- * started, or this generation already ended. Refs registered since
- * `beginWait`, and refs not delivered, stay owed. The row is kept even when
- * nothing is left, so generations never restart.
+ * Finish the wait that `beginWait` numbered `generation` in `lane`: drop the
+ * `delivered` refs from what `caller` owes and re-arm the lane's row. A
+ * compare-and-set on the lane's row: `applied: false` (and nothing written)
+ * when the row is gone, a newer wait of the lane started, or this generation
+ * already ended. Refs registered since `beginWait`, and refs not delivered, stay
+ * owed. The row is kept even when nothing is left, so generations never restart.
  */
 export function endWait(
   db: Db,
   caller: string,
   generation: number,
   delivered: readonly (RegisteredRef & DeliveredRun)[],
+  lane: WaitLane = "shell",
 ): { applied: boolean } {
   return db
     .transaction((): { applied: boolean } => {
-      const row = select(db, caller);
-      if (row === undefined || row.generation !== generation || row.state !== "waiting") {
+      const own = select(db, laneRow(caller, lane));
+      if (own === undefined || own.generation !== generation || own.state !== "waiting") {
         return { applied: false };
       }
+      const row = lane === "shell" ? own : select(db, caller);
+      if (row === undefined) return { applied: false };
       const reg = parse(row);
       const gone = new Set(canonical(delivered).map(keyOf));
       // A send armed after the delivered run (producer fence >= the run) still owes the run that
@@ -488,9 +514,13 @@ export function endWait(
       const kept = Object.fromEntries(
         Object.entries(baselines).filter(([k]) => left.some((r) => refKeyOf(r) === k)),
       );
+      const now = new Date().toISOString();
       db.prepare(
-        "UPDATE wait_registrations SET refs_json = ?, baselines_json = ?, state = 'armed', updated_at = ? WHERE caller = ?",
-      ).run(JSON.stringify(left), JSON.stringify(kept), new Date().toISOString(), caller);
+        "UPDATE wait_registrations SET refs_json = ?, baselines_json = ?, updated_at = ? WHERE caller = ?",
+      ).run(JSON.stringify(left), JSON.stringify(kept), now, caller);
+      db.prepare(
+        "UPDATE wait_registrations SET state = 'armed', updated_at = ? WHERE caller = ?",
+      ).run(now, laneRow(caller, lane));
       return { applied: true };
     })
     .immediate();

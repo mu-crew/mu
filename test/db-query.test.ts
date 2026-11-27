@@ -541,8 +541,8 @@ describe("db query allows only read-only PRAGMAs (a prepare APPLIES a PRAGMA)", 
     expect(busy()).toBe(5000);
     expect(db.pragma("writable_schema", { simple: true })).toBe(0);
     expect(db.pragma("query_only", { simple: true })).toBe(0);
-    // Bit 0 is the settle lane's adoption mark (src/wait-cursor.ts), set at open.
-    expect(db.pragma("user_version", { simple: true })).toBe(1);
+    // Bit 1 is the settle lane's adoption mark (src/wait-cursor.ts), set at open.
+    expect(db.pragma("user_version", { simple: true })).toBe(2);
     await cmdDbQuery(db, "UPDATE tasks SET impact = 5 WHERE local_id = 'a'"); // not read-only
   });
 
@@ -560,7 +560,7 @@ describe("db query allows only read-only PRAGMAs (a prepare APPLIES a PRAGMA)", 
     await cmdDbQuery(db, "PRAGMA foreign_keys", { json: true });
     expect(lastRows()).toEqual([{ foreign_keys: 1 }]);
     await cmdDbQuery(db, "PRAGMA user_version", { json: true });
-    expect(lastRows()).toEqual([{ user_version: 1 }]);
+    expect(lastRows()).toEqual([{ user_version: 2 }]);
     await cmdDbQuery(db, "PRAGMA foreign_key_list(task_edges)", { json: true });
     await cmdDbQuery(db, "PRAGMA index_list(tasks)", { json: true });
     await cmdDbQuery(db, "PRAGMA foreign_key_check", { json: true });

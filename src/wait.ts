@@ -93,12 +93,10 @@ import { DEFAULT_SUBSTATE, type TaskStatus } from "./tasks/status.js";
 import {
   type CursorToken,
   closedToken,
-  DELEGATE_TOKEN,
   isConsumed,
   logStallOnce,
   readCursors,
   recordCursors,
-  SETTLE_TOKEN,
 } from "./wait-cursor.js";
 import {
   agentExists,
@@ -223,16 +221,16 @@ export async function waitForEvents(
     targetsOnly ? new Set([...explicit.keys(), ...blockers.map(refKey)]) : undefined;
 
   // ─── one active wait per caller; cursors read before any await ────
+  // The settle lane (pi's settle wait) numbers its waits apart from a shell wait's, and keeps its
+  // own delegate cursors (src/wait-cursor.ts): neither supersedes nor hides answers from the other.
+  const lane = opts.settleLane === true ? "settle" : "shell";
   const begun = new Map<string, NonNullable<ReturnType<typeof beginWait>>>();
   if (consumes) {
     for (const c of callers) {
-      const b = beginWait(db, c);
+      const b = beginWait(db, c, lane);
       if (b !== undefined) begun.set(c, b);
     }
   }
-  // The settle lane: delegate answers are consumed as delivered into the transcript, apart from
-  // what a shell wait of the same caller consumed (src/wait-cursor.ts).
-  const delegateToken = opts.settleLane === true ? SETTLE_TOKEN : DELEGATE_TOKEN;
   const cursorsBy = new Map<string, Map<string, CursorToken>>(
     (consumes ? callers : []).map((c) => [c, readCursors(db, c)]),
   );
@@ -1059,7 +1057,9 @@ export async function waitForEvents(
       }
     }
     for (const { call, target: isTarget, suppressible } of calls.values()) {
-      push(delegateItem(call, isTarget, suppressible, order++, delegateToken));
+      const it = delegateItem(call, isTarget, suppressible, order++);
+      if (lane === "settle") it.ckey = urgentKey("settle", it.key);
+      push(it);
     }
     if (opts.blockersOf !== undefined && umbrella != null) {
       let open = false;
@@ -1368,6 +1368,7 @@ export async function waitForEvents(
                     }
                   : {}),
               })),
+              lane,
             );
             if (!ended.applied) {
               applied = false;
