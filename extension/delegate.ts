@@ -153,6 +153,8 @@ export function delegateMax(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isInteger(n) && n > 0 ? n : DELEGATE_MAX_DEFAULT;
 }
 const W = DELEGATE_WORKSTREAM;
+/** Why a call this runtime never started is refused: shutdown came first. */
+const SESSION_ENDED = "its session ended before it started";
 
 /** Registration guards: an unmanaged pi, or an orchestrator `mu orchestrate`
  *  started (`MU_ORCHESTRATOR=1`), not switched off. A worker or a delegate is
@@ -274,6 +276,13 @@ export function registerDelegate(
    *  wake carried its pointer into the conversation (no second wake; an
    *  interrupt clears it). `noted`: an interrupt's note named it. */
   const owed = new Map<string, WakeAnswer & { at: number; noted?: boolean; woken?: boolean }>();
+  /** What a settle acked (`delivered`) in this runtime: the calls it showed, and the latest
+   *  start of a wait that found nothing owed. A settle may consume an answer between its
+   *  durable finish and its `owed` entry (the pane close runs between): it is not owed then. */
+  const shownCalls = new Set<string>();
+  let drainedBefore = 0;
+  const settledAlready = (callId: string, finishedAt: number) =>
+    shownCalls.has(callId) || finishedAt < drainedBefore;
   /** The settle wait (extension/nudge.ts) delivers the reports and acks them through
    *  `delivered`; without it (MU_NUDGE=0) a wake entering the conversation is the delivery. */
   const settleAcks = () => process.env.MU_NUDGE !== "0";
@@ -397,6 +406,18 @@ export function registerDelegate(
       starting++; // held until start() takes over the slot
       void q.registered
         .then(async () => {
+          if (closed) {
+            // Shut down while it waited for its row: shutdown no longer sees it (it left the
+            // queue), so park it as refused here, as shutdown parks the queued ones.
+            starting--;
+            reportPending();
+            await calls
+              .mark(q.call.callId, "refused", { error: SESSION_ENDED })
+              .catch((e: unknown) =>
+                trace("mark.refused.failed", { call: q.call.callId, error: errText(e) }),
+              );
+            return;
+          }
           try {
             await calls.mark(q.call.callId, "starting");
           } catch (e) {
@@ -409,6 +430,7 @@ export function registerDelegate(
         .then(
           () => {},
           (e: unknown) => {
+            if (closed) return; // nobody to tell: the start recorded the call refused
             startFailed(q.handle, e);
             drain();
           },
@@ -733,12 +755,13 @@ export function registerDelegate(
     } catch (e) {
       finErr = errText(e);
     }
+    const finishedAt = Date.now(); // durable by now: a wait started later can consume it
     // Close only after a clean finish that is on record: a died or timed-out
     // pane, or one whose record failed, is evidence.
     let pane: PaneFate = { closed: false, why: "keep: true" };
     if (outcome === "blocked") pane = kept;
     else if (outcome !== "done" && outcome !== "empty") pane = kept;
-    else if (fin?.state !== "done" && outcome === "done")
+    else if (fin === undefined || (fin.state !== "done" && outcome === "done"))
       pane = { closed: false, why: "its result is not recorded" };
     else if (!keep) pane = await closeDelegate(name, identity, ws);
     if (fin === undefined) {
@@ -755,6 +778,7 @@ export function registerDelegate(
       );
       return;
     }
+    if (settledAlready(call.callId, finishedAt)) return; // a settle consumed it during the close
     owed.set(call.callId, {
       callId: call.callId,
       name,
@@ -770,7 +794,7 @@ export function registerDelegate(
         ? { record: `${call.record.workstream}/${call.record.task}` }
         : {}),
       ...(pane.closed ? {} : { kept: pane.why }),
-      at: Date.now(),
+      at: finishedAt,
     });
     reportPending();
     wakeIfIdle();
@@ -917,6 +941,8 @@ export function registerDelegate(
         if (!isDir(cwd))
           throw new SpawnFail(`mu_delegate: cwd ${cwd} is not a directory`, "unsent");
       }
+      // Shut down before the spawn (a queued call drained while shutdown ran): no pane.
+      if (closed) throw new SpawnFail(`mu_delegate: ${SESSION_ENDED}`, "unsent");
       let spawned: Awaited<ReturnType<typeof spawn>>;
       try {
         spawned = await spawn(call, req.text, cwd, signal);
@@ -934,6 +960,20 @@ export function registerDelegate(
         );
       }
       const { name, runs, attach, workspace, sessionFile, identity } = spawned;
+      if (closed) {
+        // Shut down during the spawn: nothing will watch this pane. Close it, end the call.
+        const c = await closeDelegate(name, identity, ws);
+        await calls
+          .finish(call.callId, {
+            outcome: "cancelled",
+            text: `Its session ended while it spawned.${c.closed ? "" : ` Pane ${ws}/${name} kept: ${c.why}`}`,
+            author: call.caller,
+          })
+          .catch((e: unknown) =>
+            trace("finish.closed.failed", { call: call.callId, error: errText(e) }),
+          );
+        throw new Error(`mu_delegate: its session ended while ${ws}/${name} spawned`);
+      }
       await watch(call, name, runs, {
         keep,
         timeoutS,
@@ -1011,12 +1051,17 @@ export function registerDelegate(
         return;
       }
       // The run finished the call durably (verdict, report, close): owed to the settle.
+      const finishedAt = Date.now();
       recording.add(call.callId);
       const verdict = await calls
         .show(call.callId)
         .then((x) => x.verdict ?? undefined)
         .catch(() => undefined)
         .finally(() => recording.delete(call.callId));
+      if (settledAlready(call.callId, finishedAt)) {
+        reportPending();
+        return;
+      }
       owed.set(call.callId, {
         callId: call.callId,
         name,
@@ -1027,7 +1072,7 @@ export function registerDelegate(
         ...(call.record && o.state === "done"
           ? { record: `${call.record.workstream}/${call.record.task}` }
           : {}),
-        at: Date.now(),
+        at: finishedAt,
       });
       reportPending();
       wakeIfIdle();
@@ -1226,7 +1271,8 @@ export function registerDelegate(
       const decision = admission();
       const handle = decision === "starting" ? "" : `queued-${++queueSeq}`;
       if (decision === "starting") starting++;
-      const session = piSessionId(ctx) || process.env.PI_SESSION_ID || `local-${token}`;
+      // Never the inherited PI_SESSION_ID: a nested pi would register under its parent's session.
+      const session = piSessionId(ctx) || `local-${token}`;
       const caller = `pi:${session}`;
       const info: Omit<CallInfo, "task"> = {
         callId: `${caller}:${token}-${++callSeq}`,
@@ -1586,7 +1632,7 @@ export function registerDelegate(
   // `running` pane calls, so no wait owes an answer nobody watches. A call whose
   // agent is gone ends as failed through the same recorder.
   pi.on("session_start", async (_e, ctx) => {
-    const session = piSessionId(ctx) || process.env.PI_SESSION_ID;
+    const session = piSessionId(ctx); // never the inherited parent's PI_SESSION_ID
     if (!session || closed) return;
     const r = await mu(["delegates", "list", "--caller", `pi:${session}`, "--json"]).catch(
       () => undefined,
@@ -1684,7 +1730,7 @@ export function registerDelegate(
         try {
           await q.registered;
           await calls.mark(q.call.callId, "refused", {
-            error: "its session ended before it started",
+            error: SESSION_ENDED,
           });
           refused.push(q.call.callId);
         } catch {
@@ -1721,9 +1767,16 @@ export function registerDelegate(
   return {
     answerPending: () => arriving.size > 0,
     delivered(shown) {
-      if (Array.isArray(shown)) for (const c of shown) owed.delete(c);
-      else
-        for (const [c, a] of owed) if (a.at < (shown as { before: number }).before) owed.delete(c);
+      if (Array.isArray(shown))
+        for (const c of shown) {
+          owed.delete(c);
+          shownCalls.add(c);
+        }
+      else {
+        const { before } = shown as { before: number };
+        drainedBefore = Math.max(drainedBefore, before);
+        for (const [c, a] of owed) if (a.at < before) owed.delete(c);
+      }
       reportPending();
     },
   };
