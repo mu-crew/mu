@@ -182,6 +182,7 @@ describe("a first turn's recovery on Rex (rex_first_turn_recovery_bypasses_refus
 
 describe("a release an earlier build proved on Rex (rex_legacy_release_trusts_unsafe_proof)", () => {
   /** A file kind's job whose record an earlier build committed to `released` on a Rex proof. */
+  const REX_VIEW = "block:11111111-2222-3333-4444-555555555555";
   async function seedLegacyRexRelease(): Promise<string> {
     const FILE = { handle: "file", start: { lookup: true, fenceKey: false } };
     await h.setup(FILE);
@@ -193,16 +194,17 @@ describe("a release an earlier build proved on Rex (rex_legacy_release_trusts_un
         name: "rex",
         carrierViews: true,
         spawnAgent: async (o) => {
-          h.panes.set("%1", { command: o.command });
+          // A Rex view has a Rex block id: a tmux-shaped id is another backend's pane.
+          h.panes.set(REX_VIEW, { command: o.command });
           writeFileSync(jobFile, "file-job-1\n");
-          o.onPaneCreated?.("%1", FAKE_SERVER_IDENTITY);
-          return "%1";
+          o.onPaneCreated?.(REX_VIEW, FAKE_SERVER_IDENTITY);
+          return REX_VIEW;
         },
       });
       await h.spawn();
       expect(getCarrierJobByName(h.db, "ws", "w1")?.viewServer).toMatch(/^rex:/);
       // A wrong-server miss: the live view reads absent; the stop then fails.
-      h.panes.delete("%1");
+      h.panes.delete(REX_VIEW);
       h.f.set({ faults: { "job.stop": ["permanent"] } });
       await expect(closeAgent(h.db, "w1", { workstream: "ws" })).rejects.toThrow();
     } finally {
@@ -217,11 +219,16 @@ describe("a release an earlier build proved on Rex (rex_legacy_release_trusts_un
   async function expectKeptUntilAbandon(jobFile: string): Promise<void> {
     const stops = h.f.backend().stops;
     // Today's build, on tmux (the active mux need not be Rex) and on Rex.
-    for (const mux of [() => h.stubMux(), asRex]) {
+    // On tmux the Rex view is another backend's pane: never read as gone, so the close
+    // refuses before the lease is asked. On Rex the release's unsafe proof refuses it.
+    for (const [mux, why] of [
+      [() => h.stubMux(), /belongs to rex, not tmux/],
+      [asRex, /released on rex, which cannot prove it gone/],
+    ] as const) {
       mux();
       const err = await closeAgent(h.db, "w1", { workstream: "ws" }).catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(CarrierJobKeptError);
-      expect((err as Error).message).toMatch(/released on rex, which cannot prove it gone/);
+      if (mux === asRex) expect(err).toBeInstanceOf(CarrierJobKeptError);
+      expect((err as Error).message).toMatch(why);
     }
     expect(h.f.backend().stops).toBe(stops);
     expect(getCarrierJobByName(h.db, "ws", "w1")).toMatchObject({ job: "file-job-1" });
