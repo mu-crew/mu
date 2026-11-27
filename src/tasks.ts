@@ -83,6 +83,7 @@ export {
   TaskNotInWorkstreamError,
   TaskParkedError,
   TaskParkStateError,
+  TaskRejectedBlockersError,
 } from "./tasks/errors.js";
 export {
   type IdFromTitleResult,

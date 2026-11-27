@@ -30,12 +30,10 @@ it's fine: $HOME stays literal
 EOF
 ```
 
-`task add --note -` and `agent send <a> -` read stdin too. `--why` and `--evidence` do not; capture the text first:
+`task add --note -`, `agent send <a> -`, `close --evidence -` and `--why -` read stdin too:
 
 ```bash
-v=$(cat <<'EOF'
+mu task close <id> -w <ws> --evidence - <<'EOF'
 it's fine: $HOME stays literal
 EOF
-)
-mu task close <id> -w <ws> --evidence "$v"
 ```

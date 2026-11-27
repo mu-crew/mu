@@ -37,6 +37,8 @@ export const MESSAGES = {
     'a close in this SQL has no close note; close with: mu task close <id> -w <ws> --evidence "<command + result>"',
   "task.open_blockers": (id: string, blockers: readonly string[]) =>
     `task ${id} has open blockers: ${blockers.join(", ")}`,
+  "task.rejected_blockers": (id: string, blockers: readonly string[]) =>
+    `task ${id} not closed: blocker ${blockers.join(", ")} is CLOSED/rejected (--if-ready stops on a rejected blocker); resolve it, or close without --if-ready`,
   "task.open_blockers_sql": () =>
     "a task in this SQL closed as done with open blockers; inspect with: mu task tree <id> -w <ws>",
   "task.park_state": (id: string, status: "IN_PROGRESS" | "CLOSED") =>

@@ -15,6 +15,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setStdinReaderForTests } from "../src/cli/stdin.js";
 import { openDb } from "../src/db.js";
 import { addTask, closeTask, getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -33,6 +34,7 @@ describe("mu task close --if-ready", () => {
   });
 
   afterEach(() => {
+    setStdinReaderForTests(null);
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -239,5 +241,75 @@ describe("mu task close --if-ready", () => {
     expect(r.stdout).toContain("umbrella");
     expect(r.stdout).toContain("blocked by 1 task");
     expect(r.stdout).toContain("a");
+  });
+  function seedBlocker(as: "done" | "wontfix" | "duplicate" | "superseded" | "rejected" | "open") {
+    const seed = openDb({ path: dbPath });
+    addTask(seed, { localId: "a", workstream: "test", title: "A", impact: 50, effortDays: 1 });
+    addTask(seed, {
+      localId: "umbrella",
+      workstream: "test",
+      title: "Umbrella",
+      impact: 50,
+      effortDays: 1,
+      blockedBy: ["a"],
+    });
+    if (as !== "open") {
+      closeTask(seed, "a", { workstream: "test", evidence: "e", why: "w", as });
+    }
+    seed.close();
+  }
+  const closeIfReady = ["task", "close", "umbrella", "-w", "test", "--if-ready", "--evidence", "e"];
+
+  it.each(["done", "wontfix", "duplicate", "superseded"] as const)(
+    "a CLOSED/%s blocker counts as ready",
+    async (as) => {
+      seedBlocker(as);
+      const r = await runCli(closeIfReady, dbPath);
+      expect(r.exitCode).toBeNull();
+      const db = openDb({ path: dbPath });
+      expect(getTask(db, "umbrella", "test")?.status).toBe("CLOSED");
+      db.close();
+    },
+  );
+
+  it("a CLOSED/rejected blocker refuses (exit 4) and writes nothing", async () => {
+    seedBlocker("rejected");
+    const r = await runCli(closeIfReady, dbPath);
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toContain("CLOSED/rejected");
+    expect(r.stderr).toContain("a");
+    const db = openDb({ path: dbPath });
+    expect(getTask(db, "umbrella", "test")?.status).toBe("OPEN");
+    db.close();
+  });
+
+  it("an OPEN blocker still skips (exit 0)", async () => {
+    seedBlocker("open");
+    const r = await runCli(closeIfReady, dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(r.stdout).toContain("Skipped");
+  });
+
+  it("without --if-ready a rejected blocker does not stop the close", async () => {
+    seedBlocker("rejected");
+    const r = await runCli(["task", "close", "umbrella", "-w", "test", "--evidence", "e"], dbPath);
+    expect(r.exitCode).toBeNull();
+  });
+
+  it("--evidence - and --why - read stdin verbatim", async () => {
+    seedBlocker("done");
+    setStdinReaderForTests(async () => "it's $HOME\n");
+    const r = await runCli(["task", "close", "umbrella", "-w", "test", "--evidence", "-"], dbPath);
+    expect(r.exitCode).toBeNull();
+    setStdinReaderForTests(async () => "no $time\n");
+    const w = await runCli(
+      ["task", "close", "umbrella", "-w", "test", "--as", "wontfix", "--why", "-"],
+      dbPath,
+    );
+    expect(w.exitCode).toBeNull();
+    const n = await runCli(["task", "notes", "umbrella", "-w", "test"], dbPath);
+    expect(n.stdout).toContain("it's $HOME");
+    expect(n.stdout).toContain("no $time");
+    expect(n.stdout).not.toMatch(/\t-\s*$/m);
   });
 });

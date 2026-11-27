@@ -22,6 +22,7 @@ import {
   TaskHasOpenBlockersError,
   TaskNotFoundError,
   TaskParkStateError,
+  TaskRejectedBlockersError,
 } from "./errors.js";
 import { getTask, listNotes } from "./queries.js";
 import {
@@ -338,6 +339,14 @@ function closeTaskImpl(
   const alreadyThere = before?.status === "CLOSED" && before.substate === as;
   const evidence = (opts.evidence ?? "").trim() === "" ? undefined : opts.evidence;
   if (opts.ifReady && before) {
+    // A rejected blocker is a refusal, not a wait: error before the
+    // not-ready skip, so no retry loop spins on it.
+    const rejected = getTaskEdgesWithStatus(db, localId, before.workstreamName)
+      .blockers.filter((e) => e.status === "CLOSED" && e.substate === "rejected")
+      .map((e) => e.name);
+    if (rejected.length > 0) {
+      throw new TaskRejectedBlockersError(localId, before.workstreamName, rejected);
+    }
     // Direct blockers only: a blocker not CLOSED, or a check on one with no
     // verdict, and the umbrella isn't ready.
     const { blockingIds, pendingChecks } = closeReadiness(db, localId, before.workstreamName);

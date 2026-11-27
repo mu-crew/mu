@@ -196,6 +196,23 @@ export class TaskHasOpenBlockersError extends Error {
 }
 
 /**
+ * Thrown by `closeTask` with `ifReady` when a direct blocker is
+ * CLOSED/rejected: `--if-ready` is the stricter gate, so a refused piece
+ * of work does not count as ready. wontfix, duplicate and superseded still
+ * count ("stop waiting"); a plain close is unchanged.
+ */
+export class TaskRejectedBlockersError extends Error {
+  override readonly name = "TaskRejectedBlockersError";
+  constructor(
+    public readonly taskId: string,
+    public readonly workstream: string,
+    public readonly blockerIds: readonly string[],
+  ) {
+    super(say("task.rejected_blockers", taskId, blockerIds));
+  }
+}
+
+/**
  * Thrown by `parkTask` on an IN_PROGRESS or CLOSED task. Park is one
  * transition (OPEN/todo → OPEN/parked); the owner releases, or the task
  * is reopened, first.

@@ -413,11 +413,11 @@ export function wireTaskCommands(program: Command): void {
     )
     .option(
       "--why <text>",
-      "reason, stored as a note; every --as but done needs it (done takes --evidence instead)",
+      "reason, stored as a note; every --as but done needs it (done takes --evidence instead); `-` reads it from stdin (--why - <<'EOF')",
     )
     .option(
       "--if-ready",
-      "only close when every blocker is CLOSED and every check on them has a verdict; otherwise no-op + list what it waits for",
+      "only close when every blocker is CLOSED and every check on them has a verdict; otherwise no-op + list what it waits for. A CLOSED/rejected blocker refuses (exit 4); wontfix, duplicate, superseded count as ready",
     )
     .option(
       "--report <text>",
@@ -425,7 +425,10 @@ export function wireTaskCommands(program: Command): void {
     )
     .option("--note <text>", "alias for --evidence")
     .option(...WORKSTREAM_OPT)
-    .option(...EVIDENCE_OPT)
+    .option(
+      "--evidence <text>",
+      "record what the caller observed (e.g. 'tests pass: npm test exit 0'); `-` reads it from stdin (--evidence - <<'EOF'); a bare \"-\" cannot be stored, write \"-.\" instead",
+    )
     .option(...JSON_OPT)
     .action(function (id: string) {
       const opts = (this as Command).opts() as {

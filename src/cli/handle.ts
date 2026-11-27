@@ -187,6 +187,7 @@ import {
   TaskNotInWorkstreamError,
   TaskParkedError,
   TaskParkStateError,
+  TaskRejectedBlockersError,
   TaskTitleSlugEmptyError,
 } from "../tasks.js";
 import { currentCallers } from "../wait-callers.js";
@@ -574,6 +575,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof DelegateStateError ||
     err instanceof TaskAlreadyOwnedError ||
     err instanceof TaskHasOpenBlockersError ||
+    err instanceof TaskRejectedBlockersError ||
     // Substate refusals (ts_4): a park from the wrong phase, a claim on a
     // parked task, a pair outside TASK_SUBSTATES.
     err instanceof TaskParkStateError ||

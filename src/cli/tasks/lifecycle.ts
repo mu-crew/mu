@@ -27,6 +27,7 @@ import {
 import { dirtyFiles } from "../../vcs/git.js";
 import { getWorktreeFor } from "../../worktree.js";
 import { UsageError } from "../handle.js";
+import { readStdinText, STDIN_ARG } from "../stdin.js";
 
 export async function cmdTaskClose(
   db: Db,
@@ -47,6 +48,10 @@ export async function cmdTaskClose(
     throw new UsageError(say("task.close_note_alias"), { showHelp: false });
   }
   const opts = { ...rawOpts, evidence: rawOpts.evidence ?? rawOpts.note };
+  // `-` reads the text from stdin, as `task note -` does (stdin is read once:
+  // at most one of --evidence/--note/--why may be `-`).
+  if (opts.evidence === STDIN_ARG) opts.evidence = await readStdinText("--evidence");
+  if (opts.why === STDIN_ARG) opts.why = await readStdinText("--why");
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveExistingWorkstream(db, opts.workstream);

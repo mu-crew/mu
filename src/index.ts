@@ -728,6 +728,7 @@ export {
   type TaskPair,
   TaskParkedError,
   TaskParkStateError,
+  TaskRejectedBlockersError,
   type TaskRow,
   type TaskStatus,
   type TaskSubstate,
