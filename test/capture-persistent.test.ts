@@ -36,7 +36,7 @@ import { rmFixtureDir } from "./_fs.js";
 // This file pins openDb on fresh files: opt out of the template copy (test/_setup-db.ts).
 vi.unmock("../src/db.js");
 
-const PINNED_CHECKSUM = "e61350f9f9527a015f9bdea1ad3783fa914dcac9e11785fa4f289cb760edec83";
+const PINNED_CHECKSUM = "3780356b2102a799f662cb831057642a3db7c134ea4ca527c0a9e02182d3b170";
 
 let dir: string;
 let path: string;
@@ -206,6 +206,7 @@ describe("the context wrappers own the transaction (sp_ctx_txn_boundary)", () =>
       intent: null,
       actorSession: null,
       actorAnchor: null,
+      actorRole: null,
       applying: false,
     });
     expect(a.prepare("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 });
@@ -285,6 +286,7 @@ describe("the context wrappers own the transaction (sp_ctx_txn_boundary)", () =>
       intent: null,
       actorSession: null,
       actorAnchor: null,
+      actorRole: null,
       applying: false,
     });
   });
@@ -591,7 +593,7 @@ describe("capture version stamp", () => {
   it("pins the generated DDL: changing a generator requires a CAPTURE_VERSION bump", () => {
     // If this fails you changed trigger SQL. Bump CAPTURE_VERSION in
     // src/capture.ts, then update the pin below.
-    expect(CAPTURE_VERSION).toBe(7);
+    expect(CAPTURE_VERSION).toBe(8);
     expect(GENERATED_TRIGGER_CHECKSUM).toBe(PINNED_CHECKSUM);
   });
 

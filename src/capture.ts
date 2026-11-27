@@ -108,7 +108,7 @@ const UNRESOLVED = "<unresolved>";
  * a capture revision is upgradeable in place, so it must not be folded
  * into it (an older schema number is refused before any trigger work).
  */
-export const CAPTURE_VERSION = 7;
+export const CAPTURE_VERSION = 8;
 
 /** Lowest SQLite that mints correct HLCs: `unixepoch('subsec')` arrived
  *  in 3.42; before it the call yields NULL and every op gets a zero-time
@@ -189,7 +189,7 @@ const HLC = `(SELECT printf('%015d.%06d.%s', last_wall, last_counter, machine_id
 
 /** Column list shared by every op INSERT. */
 const OP_COLS =
-  "(hlc, machine_id, group_id, actor, intent, actor_session, actor_anchor, entity, key, op, payload, created_at)";
+  "(hlc, machine_id, group_id, actor, intent, actor_session, actor_anchor, actor_role, entity, key, op, payload, created_at)";
 
 /** The context/identity columns, in OP_COLS order after `hlc`.
  *  `group_id` falls back to a per-op random hex string so the column is
@@ -201,7 +201,8 @@ const OP_CTX_VALUES = `
   (SELECT actor  FROM op_ctx WHERE id = 1),
   (SELECT intent FROM op_ctx WHERE id = 1),
   (SELECT actor_session FROM op_ctx WHERE id = 1),
-  (SELECT actor_anchor FROM op_ctx WHERE id = 1)`;
+  (SELECT actor_anchor FROM op_ctx WHERE id = 1),
+  (SELECT actor_role FROM op_ctx WHERE id = 1)`;
 
 /** ISO-8601 wall time, matching what the SDK writes elsewhere.
  *  Advisory only — `hlc` is the ordering key, this is for humans. */

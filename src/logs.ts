@@ -19,7 +19,7 @@ import { type Db, SYNCED_ENTITIES } from "./db.js";
 import { nextHlc } from "./hlc.js";
 import { parseOpKey } from "./log-render.js";
 import { say } from "./messages.js";
-import { resolveProvenance } from "./provenance.js";
+import { type ActorRole, resolveActorRole, resolveProvenance } from "./provenance.js";
 import { singleLinePayload } from "./segment-line.js";
 
 export type LogKind = "message" | "event" | "broadcast" | string;
@@ -55,6 +55,9 @@ export interface LogRow {
   actorSession: string | null;
   /** Assistant turn (`<entry id>[:<toolCallId>]`) that ran the verb, or null. */
   actorAnchor: string | null;
+  /** Capacity the session acted in ('orchestrator' | 'worker'), or null when
+   *  unknown or the DB predates the column (src/provenance.ts resolveActorRole). */
+  actorRole: ActorRole | null;
   /** ISO 8601 timestamp set at insert time. */
   createdAt: string;
 }
@@ -73,6 +76,7 @@ interface RawLogRow {
   payload: string;
   actor_session: string | null;
   actor_anchor: string | null;
+  actor_role: ActorRole | null;
   created_at: string;
 }
 
@@ -80,7 +84,7 @@ interface RawLogRow {
  *  `ops.key` already holds the operator-facing workstream name (the
  *  natural key), so there is no join to do; '' means machine-wide and
  *  is normalised back to NULL in `rowFromDb`. */
-const SELECT_LOG_COLS_PROV = `
+const SELECT_LOG_COLS_BASE = `
   l.seq AS seq,
   l.key AS workstream,
   l.actor AS source,
@@ -89,37 +93,27 @@ const SELECT_LOG_COLS_PROV = `
   l.op AS op,
   l.entity AS kind,
   l.payload AS payload,
-  l.actor_session AS actor_session,
-  l.actor_anchor AS actor_anchor,
-  l.created_at AS created_at
-`;
+  l.created_at AS created_at`;
 
-const SELECT_LOG_COLS_LEGACY = `
-  l.seq AS seq,
-  l.key AS workstream,
-  l.actor AS source,
-  l.intent AS intent,
-  l.group_id AS group_id,
-  l.op AS op,
-  l.entity AS kind,
-  l.payload AS payload,
-  NULL AS actor_session,
-  NULL AS actor_anchor,
-  l.created_at AS created_at
-`;
+/** The additive provenance columns; a DB predating one reads it as NULL. */
+const PROV_COLS = ["actor_session", "actor_anchor", "actor_role"] as const;
 
-// Read-only handles opened against a DB that has not run the additive
-// `actor_session`/`actor_anchor` ALTER TABLE yet must still read logs cleanly.
-const hasProvColsCache = new WeakMap<Db, boolean>();
-function selectLogCols(db: Db): string {
-  let has = hasProvColsCache.get(db);
-  if (has === undefined) {
-    const cols = db.prepare("PRAGMA table_info(ops)").all() as { name: string }[];
-    has =
-      cols.some((c) => c.name === "actor_session") && cols.some((c) => c.name === "actor_anchor");
-    hasProvColsCache.set(db, has);
+// Read-only handles opened against a DB that has not run an additive
+// provenance ALTER TABLE yet must still read logs cleanly.
+const opsColsCache = new WeakMap<Db, Set<string>>();
+function opsColumns(db: Db): Set<string> {
+  let cols = opsColsCache.get(db);
+  if (cols === undefined) {
+    const rows = db.prepare("PRAGMA table_info(ops)").all() as { name: string }[];
+    cols = new Set(rows.map((c) => c.name));
+    opsColsCache.set(db, cols);
   }
-  return has ? SELECT_LOG_COLS_PROV : SELECT_LOG_COLS_LEGACY;
+  return cols;
+}
+function selectLogCols(db: Db): string {
+  const cols = opsColumns(db);
+  const prov = PROV_COLS.map((c) => (cols.has(c) ? `l.${c} AS ${c}` : `NULL AS ${c}`));
+  return `${SELECT_LOG_COLS_BASE}, ${prov.join(", ")}`;
 }
 
 const LOG_FROM_JOIN = "FROM ops l";
@@ -335,6 +329,7 @@ function rowFromDb(row: RawLogRow): LogRow {
     payload: row.payload,
     actorSession: row.actor_session,
     actorAnchor: row.actor_anchor,
+    actorRole: row.actor_role,
     createdAt: row.created_at,
   };
 }
@@ -399,12 +394,13 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
   const key = opts.workstream ?? MACHINE_WIDE_KEY;
   const group = randomUUID();
   const prov = resolveProvenance();
+  const role = resolveActorRole(db, opts.intent ?? null);
   const payload = singleLinePayload(opts.payload);
   const run = () =>
     db
       .prepare(
-        `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, actor_session, actor_anchor, entity, key, op, payload, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'put', ?, ?)`,
+        `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, actor_session, actor_anchor, actor_role, entity, key, op, payload, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'put', ?, ?)`,
       )
       .run(
         nextHlc(db),
@@ -414,6 +410,7 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
         opts.intent ?? null,
         prov.actorSession,
         prov.actorAnchor,
+        role,
         kind,
         key,
         payload,
@@ -433,8 +430,45 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
     payload,
     actorSession: prov.actorSession,
     actorAnchor: prov.actorAnchor,
+    actorRole: role,
     createdAt,
   };
+}
+
+/** One (session, workstream, role) a recorded op names; see `listSessionRoles`. */
+export interface SessionRole {
+  /** `ops.actor_session` (`pi:<id>`). */
+  actorSession: string;
+  /** The op key's workstream, or null for a machine-wide op. */
+  workstream: string | null;
+  role: ActorRole;
+  /** Newest op seq behind this triple: the cursor for an incremental `since`. */
+  lastSeq: number;
+}
+
+/**
+ * Which sessions acted in which capacity per workstream, from the ops
+ * that recorded a role: one aggregate query that reads no payloads.
+ * `since` keeps only ops with seq > since, so a poller passes its last
+ * `lastSeq`. A DB predating `ops.actor_role` (read-only, not yet
+ * upgraded) has no recorded role and returns [].
+ */
+export function listSessionRoles(db: Db, opts: { since?: number } = {}): SessionRole[] {
+  if (!opsColumns(db).has("actor_role")) return [];
+  // The workstream is the key's part before the first '/' (every natural
+  // key starts '<ws>' or '<ws>/'; '' is machine-wide). See parseOpKey.
+  const rows = db
+    .prepare(
+      `SELECT actor_session AS actorSession,
+              NULLIF(CASE WHEN instr(key, '/') > 0 THEN substr(key, 1, instr(key, '/') - 1) ELSE key END, '') AS workstream,
+              actor_role AS role, MAX(seq) AS lastSeq
+         FROM ops
+        WHERE actor_role IS NOT NULL AND actor_session IS NOT NULL AND seq > ?
+        GROUP BY 1, 2, 3
+        ORDER BY lastSeq`,
+    )
+    .all(opts.since ?? 0) as SessionRole[];
+  return rows;
 }
 
 export interface ListLogsOptions {

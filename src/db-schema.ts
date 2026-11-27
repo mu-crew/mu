@@ -138,9 +138,10 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   ["remote_recovery", "dispatch_probes", "TEXT"],
   // Plugins spec D10 (review of P6e2): a wait's deadline event fires once per deadline.
   ["hosts", "deadline_fired", "INTEGER"],
-  // Provenance: the session and assistant turn behind an op (src/provenance.ts), machine-local.
+  // Provenance: the session, assistant turn and capacity behind an op (src/provenance.ts),
+  // machine-local.
   ...["op_ctx", "ops"].flatMap((t) =>
-    ["actor_session", "actor_anchor"].map((c) => [t, c, "TEXT"] as const),
+    ["actor_session", "actor_anchor", "actor_role"].map((c) => [t, c, "TEXT"] as const),
   ),
 ];
 
@@ -501,7 +502,8 @@ CREATE TABLE IF NOT EXISTS op_ctx (
   applying INTEGER NOT NULL DEFAULT 0,
   now_ms   INTEGER NOT NULL DEFAULT 0,
   actor_session TEXT,  -- provenance (src/provenance.ts); also in ADDED_COLUMNS
-  actor_anchor  TEXT
+  actor_anchor  TEXT,
+  actor_role    TEXT   -- 'orchestrator' | 'worker' | NULL (src/provenance.ts resolveActorRole)
 );
 
 -- op_dying: natural keys of workstream/task rows mid-DELETE, so cascaded
@@ -944,6 +946,7 @@ CREATE TABLE IF NOT EXISTS ops (
   created_at TEXT NOT NULL,
   actor_session TEXT,  -- provenance (src/provenance.ts); also in ADDED_COLUMNS
   actor_anchor  TEXT,
+  actor_role    TEXT,  -- 'orchestrator' | 'worker' | NULL; also in ADDED_COLUMNS
   UNIQUE (machine_id, hlc)
 );
 

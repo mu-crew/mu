@@ -421,6 +421,8 @@ export {
   type LogRow,
   latestSeq,
   listLogs,
+  listSessionRoles,
+  type SessionRole,
 } from "./logs.js";
 export {
   type InitItem,
@@ -493,6 +495,13 @@ export {
   PluginNotFoundError,
   PluginRefusedError,
 } from "./plugins/errors.js";
+export {
+  type ActorRole,
+  ORCHESTRATION_INTENTS,
+  type Provenance,
+  resolveActorRole,
+  resolveProvenance,
+} from "./provenance.js";
 export {
   type MachineLocalLoss,
   type RebuildOptions,

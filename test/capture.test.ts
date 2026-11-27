@@ -787,6 +787,7 @@ describe("op capture (triggers)", () => {
         intent: null,
         actorSession: null,
         actorAnchor: null,
+        actorRole: null,
         applying: false,
       });
     });

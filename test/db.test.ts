@@ -122,6 +122,7 @@ describe("openDb", () => {
       "created_at",
       "actor_session",
       "actor_anchor",
+      "actor_role",
     ]);
 
     const insert = (op: string, hlc: string): void => {

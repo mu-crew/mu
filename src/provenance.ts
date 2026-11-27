@@ -5,8 +5,14 @@
 // are stamped on every op by the op-context layer, so a reader can link
 // a task change back to the conversation that caused it. Both are
 // advisory and best-effort: any failure yields null, never an error.
+//
+// `actorRole` records the capacity the session acted in ('orchestrator' |
+// 'worker'), decided where mu knows it (resolveActorRole) rather than
+// inferred later from intents by a reader. Rex/tmux pane tags can read
+// the same function when they learn roles (ROADMAP rex-mu-role-parity).
 
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import type { Db } from "./db.js";
 
 export interface Provenance {
   actorSession: string | null;
@@ -80,4 +86,52 @@ export function resolveProvenance(env: NodeJS.ProcessEnv = process.env): Provena
     env.MU_ACTOR_ANCHOR ||
     (env.PI_SESSION_FILE ? latestAssistantAnchor(env.PI_SESSION_FILE) : null);
   return { actorSession: actorSession || null, actorAnchor: actorAnchor || null };
+}
+
+/** The capacity an op's session acted in; `ops.actor_role`. */
+export type ActorRole = "orchestrator" | "worker";
+
+/** Intents only an orchestrating session issues: workers note, claim and
+ *  close their own task, they do not plan or drive a crew. */
+export const ORCHESTRATION_INTENTS: ReadonlySet<string> = new Set([
+  "task.add",
+  "agent.spawn",
+  "agent.send",
+  "agent.close",
+  "workstream.init",
+  "task.reap",
+]);
+
+/**
+ * The role to stamp on an op with `intent`, from the caller's env:
+ *   - `MU_ORCHESTRATOR=1` (spawned `--orchestrator`, `mu orchestrate`): orchestrator.
+ *   - a managed agent (`MU_MANAGED_AGENT=1`, `MU_WORKSTREAM`, `MU_AGENT_NAME`)
+ *     with a row in `agents` of its workstream: worker, whatever the intent.
+ *   - anyone else issuing an orchestration intent: orchestrator.
+ *   - otherwise null (unknown; a plain note or close says nothing about capacity).
+ * Best-effort like the rest of provenance: a failed lookup yields null.
+ */
+export function resolveActorRole(
+  db: Db,
+  intent: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): ActorRole | null {
+  if (env.MU_ORCHESTRATOR === "1") return "orchestrator";
+  const { MU_MANAGED_AGENT: managed, MU_WORKSTREAM: ws, MU_AGENT_NAME: name } = env;
+  if (managed === "1" && ws && name && isRegisteredAgent(db, ws, name)) return "worker";
+  return intent !== null && ORCHESTRATION_INTENTS.has(intent) ? "orchestrator" : null;
+}
+
+function isRegisteredAgent(db: Db, workstream: string, name: string): boolean {
+  try {
+    return (
+      db
+        .prepare(
+          "SELECT 1 FROM agents a JOIN workstreams w ON w.id = a.workstream_id WHERE w.name = ? AND a.name = ?",
+        )
+        .get(workstream, name) !== undefined
+    );
+  } catch {
+    return false;
+  }
 }
