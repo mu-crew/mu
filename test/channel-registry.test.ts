@@ -265,7 +265,10 @@ describe("a channel target carries the row's job (ChannelTarget.job)", () => {
       cli: "claude",
       channel: "hooks",
     });
-    expect(agentChannel(channelTarget(db, hooks))).toBe(channelNamed("hooks"));
+    // Wrapped by the pane gate (another backend's pane refuses), so compared by name and caps.
+    const ch = agentChannel(channelTarget(db, hooks));
+    expect(ch.name).toBe("hooks");
+    expect(ch.caps).toBe(channelNamed("hooks")?.caps);
   });
 });
 

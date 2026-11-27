@@ -20,6 +20,7 @@ import {
   AgentSendUnsupportedError,
 } from "../agents/errors.js";
 import { rowRef } from "../jobs/view.js";
+import { assertOwnPane } from "../mux/binding.js";
 import { activeMux, type SendOptions } from "../mux.js";
 import { composeChannel } from "./compose.js";
 import { typeKeys } from "./hooks.js";
@@ -108,6 +109,8 @@ const muxImpl: ChannelImpl = {
   answer: async (t, keys, opts) => {
     const { name, workstreamName, paneId } = t.agent;
     const mux = await activeMux();
+    // Ahead of the state read: it would read another backend's pane as gone (not blocked).
+    assertOwnPane(paneId, mux.name);
     if (!mux.sendKeys) throw new AgentAnswerUnsupportedError(name, workstreamName, "mux");
     if (opts.force !== true) {
       const reading = (await readBaseStates([t.agent], {})).get(agentKey(t.agent));

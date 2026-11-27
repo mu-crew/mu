@@ -19,7 +19,12 @@ import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
 import { agentJobRef, readingWithLiveness } from "../jobs/kinds.js";
 import { viewOwned } from "../jobs/view.js";
-import { assertDrivablePane, foreignBackend, isRetiredPane } from "../mux/binding.js";
+import {
+  assertDrivablePane,
+  assertOwnPane,
+  foreignBackend,
+  isRetiredPane,
+} from "../mux/binding.js";
 import { activeMux } from "../mux/detect.js";
 import { queuedPanes } from "../muzzle-queue.js";
 import { pluginJobRef } from "../plugins/job.js";
@@ -135,13 +140,18 @@ export function agentChannel(target: ChannelTarget): AgentChannel {
       assertDrivablePane(agent.paneId, agent.name, agent.workstreamName),
     );
   }
+  // Another live backend's pane (a tmux row under Rex, a Rex row under tmux) refuses
+  // (`ForeignPaneError`) ahead of the server check: the active backend's server identity
+  // never matches the other backend's, so that check would read a live agent as dead.
   // Pane ids restart per tmux server, so on another server `agent.paneId` names
   // someone else's pane, which a send, key press or abort must never reach. The
   // agent is dead (`AgentPaneDeadError`). A row with no recorded identity is
-  // unverified: unguarded.
-  if (!agent.paneIdentity) return channel;
+  // unverified: no server check.
   return gated(channel, async () => {
-    if (!(await viewOwned(agent.paneIdentity))) {
+    const mux = await activeMux().catch(() => undefined);
+    if (mux !== undefined) assertOwnPane(agent.paneId, mux.name);
+    if (!agent.paneIdentity) return;
+    if (!(await viewOwned(agent.paneIdentity, mux))) {
       throw new AgentPaneDeadError(agent.name, agent.workstreamName, agent.paneId);
     }
   });

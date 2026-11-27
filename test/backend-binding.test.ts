@@ -18,8 +18,10 @@ import {
   spawnAgent,
   spawnForTask,
 } from "../src/agents.js";
+import { muxChannel } from "../src/channels/mux.js";
+import type { DeliveryTarget } from "../src/channels/types.js";
 import { type Db, openDb } from "../src/db.js";
-import { agentAttachTarget, viewPresent, viewState } from "../src/jobs/view.js";
+import { agentAttachTarget, viewPresent, viewState, viewStatus } from "../src/jobs/view.js";
 import { foreignBackend, paneBackend } from "../src/mux/binding.js";
 import { muxByName } from "../src/mux/detect.js";
 import type { MuxBackendName } from "../src/mux/types.js";
@@ -390,6 +392,74 @@ describe("verbs on another live backend's row", () => {
     expect(db.prepare("SELECT status FROM tasks WHERE local_id = 'job'").all()).toEqual([
       { status: "IN_PROGRESS" },
     ]);
+  });
+
+  it.each(CASES)(
+    "%s: close --force drops the row, issuing and reporting no kill",
+    async (active, paneId) => {
+      await owned(paneId);
+      mux = installMux(active, answering(active));
+      const r = await closeAgent(db, "f", { workstream: "auth", force: true });
+      expect(r).toMatchObject({ killedPane: false, deletedRow: true });
+      expect(mux.calls.some((c) => c.includes(paneId))).toBe(false);
+      expect(getAgent(db, "f", "auth")).toBeUndefined();
+    },
+  );
+
+  // A tmux row records its server (`pid|start`); Rex's identity is a UUID, so a server
+  // check alone would read the live tmux agent as dead.
+  const IDENTITY = "1234|1700000000";
+  it.each(
+    CASES.flatMap((c) => ([undefined, "mux", "hooks"] as const).map((ch) => [...c, ch] as const)),
+  )(
+    "%s: send to a %s row (a %s pane) on channel %s refuses as foreign, never dead",
+    async (active, paneId, _o, channel) => {
+      insertAgent(db, {
+        name: "f",
+        workstream: "auth",
+        paneId,
+        ...(paneId.startsWith("%") ? { paneIdentity: IDENTITY } : {}),
+        ...(channel !== undefined
+          ? { channel, cli: channel === "hooks" ? "claude" : "codex" }
+          : {}),
+      });
+      mux = installMux(active, answering(active));
+      const err = await sendToAgent(db, "f", "hi", { workstream: "auth" }).catch((e) => e);
+      expect(err).toBeInstanceOf(ForeignPaneError);
+      expect(mux.calls.some((c) => c.includes(paneId))).toBe(false);
+    },
+  );
+
+  it.each(CASES)(
+    "%s: answer on a mux row refuses as foreign, not unblocked",
+    async (active, paneId) => {
+      insertAgent(db, {
+        name: "f",
+        workstream: "auth",
+        paneId,
+        channel: "mux",
+        cli: "codex",
+        ...(paneId.startsWith("%") ? { paneIdentity: IDENTITY } : {}),
+      });
+      mux = installMux(active, answering(active));
+      const err = await answerAgent(db, "f", ["1"], { workstream: "auth" }).catch((e) => e);
+      expect(err).toBeInstanceOf(ForeignPaneError);
+    },
+  );
+
+  it("the mux channel's answer refuses a foreign row itself, ahead of its state read", async () => {
+    mux = installMux("tmux", answering("tmux"));
+    const agent = { name: "f", workstreamName: "auth", paneId: REX, cli: "codex" };
+    const err = await muxChannel
+      .answer({ agent } as unknown as DeliveryTarget, ["1"], {})
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ForeignPaneError);
+  });
+
+  it("viewStatus refuses a tmux row under Rex instead of reading it absent", async () => {
+    mux = installMux("rex", answering("rex"));
+    const err = await viewStatus("%7", muxByName("rex"), IDENTITY).catch((e) => e);
+    expect(err).toBeInstanceOf(ForeignPaneError);
   });
 
   it("attach to a retired herdr row names herdr's retirement, not a backend mismatch", () => {

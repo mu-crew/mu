@@ -282,13 +282,16 @@ export type ViewStatus =
 /**
  * The backend's own state for the pane (`paneStatus`). A reported state means
  * the pane is there; with none, view presence (`paneAlive`) decides. Throws
- * when either probe fails.
+ * when either probe fails, and refuses another backend's pane (`ForeignPaneError`).
  */
 export async function viewStatus(
   paneId: string,
   mux: MuxBackend,
   identity?: string | null,
 ): Promise<ViewStatus> {
+  // Another backend's pane refuses first: its server identity never matches, so the
+  // server check would read a live pane as absent.
+  assertOwnPane(paneId, mux.name);
   if (!(await viewOwned(identity, mux))) return { state: "absent" };
   const status = await mux.paneStatus?.(paneId);
   if (status !== undefined) return { state: "reported", status };
