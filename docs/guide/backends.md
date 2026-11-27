@@ -21,9 +21,16 @@ absent). Other harnesses report `state: unknown` unless you use murmur 2.x
 unaffected apart from missing 7501 glyphs on TUI jobs.
 
 On any tmux, a pi with `mu_delegate` calls still owed to it also sets the user
-pane option `@mu_pending` to that count on its own pane (unset at 0 and when pi
-exits), beside the `@mu_agent`/`@mu_workstream`/`@mu_role` crew tags. A status
-line or murmur reads it as `#{@mu_pending}` whatever state the pane reports.
+pane option `@mu_pending` to that count on its own pane, beside the
+`@mu_agent`/`@mu_workstream`/`@mu_role` crew tags. It unsets it at 0, when pi
+exits, and when pi starts (a pi killed in the pane may have left it set).
+Only the pane's own pi writes it: the one serving `$MU_CTL_SOCK`, or a pi
+started outside mu. A nested `pi -p` in a mu pi pane finds the socket served
+and leaves the option alone. pi writes nothing unless `$TMUX` and `$TMUX_PANE`
+are well formed and the server answers with the pid `$TMUX` names, and
+nothing on Rex. A stale value can still outlive a killed pi in a pane nothing
+restarts, so murmur trusts `#{@mu_pending}` only while the pane reports OSC
+7501 working.
 
 ## See which backend is active
 

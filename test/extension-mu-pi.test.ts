@@ -14,6 +14,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MuRunner } from "../extension/delegate.js";
+import {
+  clearPendingPaneOption,
+  reportPendingPaneOption,
+  setPaneOptionRunnerForTests,
+} from "../extension/delegate-pane-option.js";
 import muPi, {
   commandName,
   FRESH_COMMAND,
@@ -823,6 +828,40 @@ describe("mu pi extension", () => {
       expect(await ctlRequest(sock, { op: "hello" })).toMatchObject({ ok: true });
       // No temp names left behind in the socket dir.
       expect(readdirSync(dirname(sock))).toEqual(["a.sock"]);
+    });
+
+    it("@mu_pending: the pi serving the socket owns the pane; a nested pi never writes it", async () => {
+      const keys = ["TMUX", "TMUX_PANE", "TERM_PROGRAM"] as const;
+      process.env.TMUX = "/tmp/tmux-501/default,123,0";
+      process.env.TMUX_PANE = "%7";
+      const k = "TERM_PROGRAM";
+      delete process.env[k];
+      const seen: string[][] = [];
+      const runner = async (argv: readonly string[]) => {
+        if (argv[2] === "display") return "123\n";
+        seen.push([...argv]);
+        return "";
+      };
+      try {
+        setPaneOptionRunnerForTests(runner);
+        await fake.emit("session_start");
+        await new Promise((r) => setImmediate(r));
+        // The owner unsets a crashed predecessor's value at start.
+        expect(seen.map((a) => a.slice(-2))).toEqual([["-u", "@mu_pending"]]);
+        // A nested pi in the same pane (its own process: fresh module state).
+        setPaneOptionRunnerForTests(runner);
+        seen.splice(0);
+        const nested = otherPi();
+        await nested.emit("session_start");
+        await new Promise((r) => setImmediate(r));
+        await reportPendingPaneOption(2);
+        await clearPendingPaneOption();
+        await nested.emit("session_shutdown", { reason: "quit" });
+        expect(seen).toEqual([]);
+      } finally {
+        setPaneOptionRunnerForTests(async () => undefined);
+        for (const key of keys) delete process.env[key];
+      }
     });
 
     /** A mu that says the parent agent owns an IN_PROGRESS task, and whose settle wait fires. */

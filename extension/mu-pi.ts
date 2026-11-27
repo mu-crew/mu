@@ -46,6 +46,7 @@ import {
   type MuRunner,
   registerDelegate,
 } from "./delegate.js";
+import { claimPendingPaneOption } from "./delegate-pane-option.js";
 import {
   type MuNudgeApi,
   parallelSettle,
@@ -466,6 +467,10 @@ function serveCtl(pi: MuPiApi): () => boolean {
   const sock = process.env.MU_CTL_SOCK;
   if (!sock) {
     trackUiPrompts(pi);
+    // No control socket: a pi started outside mu owns its pane's `@mu_pending`.
+    pi.on("session_start", async () => {
+      void claimPendingPaneOption(true);
+    });
     return () => false;
   }
   const sockPath: string = sock;
@@ -1027,7 +1032,10 @@ function serveCtl(pi: MuPiApi): () => boolean {
     const s = g.server;
     if (s) {
       // A new/resumed session keeps the same socket, while the path is ours.
-      if (g.ino !== undefined && inodeOf(sockPath) === g.ino) return;
+      if (g.ino !== undefined && inodeOf(sockPath) === g.ino) {
+        void claimPendingPaneOption(true);
+        return;
+      }
       // Orphaned: the file was deleted or replaced under a live server.
       // Stop accepting on the dead inode (open connections finish) and rebind.
       g.server = undefined;
@@ -1035,6 +1043,9 @@ function serveCtl(pi: MuPiApi): () => boolean {
       s.close();
     }
     await bind();
+    // `@mu_pending` follows the socket: the pi serving it owns the pane; a
+    // nested pi (`pi -p` here) leaves the parent's count alone.
+    void claimPendingPaneOption(g.nested !== true);
   });
 
   pi.on("session_shutdown", async (e) => {
