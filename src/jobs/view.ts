@@ -20,7 +20,7 @@
 // the mux server it was born on (`birthServer`), and is asked about only there
 // (`viewOnServer`): another server's answer is no proof.
 
-import { foreignBackend } from "../mux/binding.js";
+import { assertDrivablePane, foreignBackend } from "../mux/binding.js";
 import { activeMux } from "../mux/detect.js";
 import {
   type ActionPaneRef,
@@ -52,6 +52,7 @@ export function viewRef(
   paneId: string,
   identity: string | null | undefined,
 ): ActionPaneRef {
+  assertDrivablePane(paneId);
   return mux.name === "tmux"
     ? requireVerifiedPane(paneRef(paneId, identity))
     : { kind: "native", paneId };
@@ -67,6 +68,7 @@ export function rowRef(
   paneId: string,
   identity: string | null | undefined,
 ): ActionPaneRef {
+  assertDrivablePane(paneId);
   return mux.name === "tmux" ? paneRef(paneId, identity) : { kind: "native", paneId };
 }
 
@@ -76,6 +78,7 @@ function probeRef(
   paneId: string,
   identity?: string | null,
 ): string | VerifiedPaneRef {
+  assertDrivablePane(paneId);
   if (mux.name !== "tmux") return paneId;
   const ref = paneRef(paneId, identity);
   return ref.kind === "verified" ? ref : ref.paneId;

@@ -19,6 +19,7 @@ export function muxByName(name: MuxBackendName): MuxBackend {
   for (const backend of BACKENDS) {
     if (backend.name === name) return backend;
   }
+  if ((name as string) === "herdr") throw new Error(say("mux.herdr_retired"));
   throw new Error(say("mux.unknown_backend", name));
 }
 

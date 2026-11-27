@@ -19,7 +19,7 @@ import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
 import { agentJobRef, readingWithLiveness } from "../jobs/kinds.js";
 import { viewOwned } from "../jobs/view.js";
-import { foreignBackend } from "../mux/binding.js";
+import { assertDrivablePane, foreignBackend, isRetiredPane } from "../mux/binding.js";
 import { activeMux } from "../mux/detect.js";
 import { queuedPanes } from "../muzzle-queue.js";
 import { pluginJobRef } from "../plugins/job.js";
@@ -127,26 +127,29 @@ function remoteOf(
 
 /** The channel `target.agent` is on: the one its row recorded at spawn (see `expectsCtl`). */
 export function agentChannel(target: ChannelTarget): AgentChannel {
-  return pinnedToServer(
-    channelFor(target.agent, target.stateDir, target.socket, target.db),
-    target.agent,
-  );
-}
-
-/**
- * The channel with every pane-addressed delivery gated on the row's recorded tmux server:
- * pane ids restart per server, so on another server `agent.paneId` names someone else's
- * pane, which a send, key press or abort must never reach. The agent is dead
- * (`AgentPaneDeadError`). A row with no recorded identity is unverified: unguarded.
- */
-function pinnedToServer(channel: AgentChannel, agent: ObservedAgent): AgentChannel {
+  const { agent } = target;
+  const channel = channelFor(agent, target.stateDir, target.socket, target.db);
+  // A retired herdr pane: no channel can reach it, so every delivery refuses alike.
+  if (isRetiredPane(agent.paneId)) {
+    return gated(channel, async () =>
+      assertDrivablePane(agent.paneId, agent.name, agent.workstreamName),
+    );
+  }
+  // Pane ids restart per tmux server, so on another server `agent.paneId` names
+  // someone else's pane, which a send, key press or abort must never reach. The
+  // agent is dead (`AgentPaneDeadError`). A row with no recorded identity is
+  // unverified: unguarded.
   if (!agent.paneIdentity) return channel;
-  const gate = async (): Promise<void> => {
+  return gated(channel, async () => {
     if (!(await viewOwned(agent.paneIdentity))) {
       throw new AgentPaneDeadError(agent.name, agent.workstreamName, agent.paneId);
     }
-  };
-  const gated =
+  });
+}
+
+/** The channel with every pane-addressed delivery run after `gate`, which throws to refuse it. */
+function gated(channel: AgentChannel, gate: () => Promise<void>): AgentChannel {
+  const wrap =
     <A extends unknown[], R>(fn: (...a: A) => Promise<R>) =>
     async (...a: A): Promise<R> => {
       await gate();
@@ -154,12 +157,12 @@ function pinnedToServer(channel: AgentChannel, agent: ObservedAgent): AgentChann
     };
   return {
     ...channel,
-    send: gated(channel.send),
-    fresh: gated(channel.fresh),
-    command: gated(channel.command),
-    interrupt: gated(channel.interrupt),
-    abort: gated(channel.abort),
-    answer: gated(channel.answer),
+    send: wrap(channel.send),
+    fresh: wrap(channel.fresh),
+    command: wrap(channel.command),
+    interrupt: wrap(channel.interrupt),
+    abort: wrap(channel.abort),
+    answer: wrap(channel.answer),
   };
 }
 

@@ -237,6 +237,22 @@ export class MuxError extends Error {
 }
 
 /**
+ * A row's pane is a retired herdr pane (`w1:p1`): no backend mu drives can read,
+ * send to, kill or probe it, so it is neither alive nor dead. Every pane-addressed
+ * verb refuses with this; only `mu agent close --force` drops such a row.
+ */
+export class RetiredPaneError extends MuxError {
+  override name = "RetiredPaneError";
+  constructor(
+    public readonly paneId: string,
+    public readonly agentName?: string,
+    public readonly workstream?: string,
+  ) {
+    super(say("mux.retired_pane", paneId, agentName, workstream));
+  }
+}
+
+/**
  * Thrown when a verb references a pane id that doesn't exist on the
  * running multiplexer. Distinct from `MuxError` (which wraps any mux
  * command failure) so callers can map it to a specific exit code

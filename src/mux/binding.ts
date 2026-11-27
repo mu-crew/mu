@@ -5,7 +5,7 @@
 // Placeholders and ids of no known shape name none (they match no shape).
 
 import { muxByName } from "./detect.js";
-import type { MuxBackendName } from "./types.js";
+import { type MuxBackendName, RetiredPaneError } from "./types.js";
 
 /** A backend mu no longer drives (herdr, retired in mu 6). Its rows stay foreign:
  *  no backend can list their panes, so reconcile must never read them as ghosts. */
@@ -19,8 +19,14 @@ const NAMES: readonly MuxBackendName[] = ["tmux", "rex"];
 /** herdr pane ids, `w1:p1` (ordinals are Crockford base32, `pA` follows `p9`). */
 const HERDR_PANE_ID_RE = /^w[0-9A-Z]+:p[0-9A-Z]+$/;
 
-export function isRetiredBackend(name: PaneBackendName): name is RetiredBackendName {
-  return name === "herdr";
+/** Whether `paneId` is a retired backend's pane: one no live backend may read as alive or dead. */
+export function isRetiredPane(paneId: string): boolean {
+  return HERDR_PANE_ID_RE.test(paneId);
+}
+
+/** Refuse (`RetiredPaneError`) a pane-addressed action on a retired backend's pane. */
+export function assertDrivablePane(paneId: string, agent?: string, workstream?: string): void {
+  if (isRetiredPane(paneId)) throw new RetiredPaneError(paneId, agent, workstream);
 }
 
 export function paneBackend(paneId: string): PaneBackendName | undefined {

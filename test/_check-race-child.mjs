@@ -31,8 +31,6 @@ db.prepare = (sql) => {
 };
 setMuxForTests({
   ...tmuxBackend,
-  runsShellCommand: true,
-  spawnAgentWaitsReady: false,
   anchorsPanes: false,
   ensureSession: async () => ({ created: false }),
   spawnAgent: async (o) => {

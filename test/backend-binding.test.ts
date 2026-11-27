@@ -7,12 +7,25 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { closeAgent } from "../src/agents/close.js";
 import { MuxBackendMismatchError } from "../src/agents/errors.js";
-import { getAgent, insertAgent, spawnAgent, spawnForTask } from "../src/agents.js";
+import {
+  answerAgent,
+  getAgent,
+  insertAgent,
+  readAgent,
+  sendToAgent,
+  spawnAgent,
+  spawnForTask,
+} from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { foreignBackend, paneBackend } from "../src/mux/binding.js";
+import { muxByName } from "../src/mux/detect.js";
+import type { MuxBackendName } from "../src/mux/types.js";
+import { RetiredPaneError } from "../src/mux/types.js";
 import { reconcile } from "../src/reconcile.js";
 import { addTask, claimTask, getTask } from "../src/tasks.js";
+import { teardownWorkstream, workstreamRevision } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
 
@@ -214,5 +227,108 @@ describe("reconcile keeps other backends' rows", () => {
     expect(getAgent(db, "t", "auth")).toBeUndefined();
     expect(getAgent(db, "h", "auth")).toBeDefined();
     expect(getAgent(db, "r", "auth")).toBeDefined();
+  });
+});
+
+describe("verbs on a retired herdr row", () => {
+  const BACKENDS = ["tmux", "rex"] as const;
+  /** An answering mux with no panes: what a herdr pane looks like to tmux and Rex. */
+  const empty = (active: MuxBackendName) => {
+    const stdout = active === "rex" ? JSON.stringify({ sessions: [] }) : "";
+    return async () => ({ stdout, stderr: "", exitCode: 0 });
+  };
+  const owned = async (channel?: "mux" | "hooks") => {
+    const row = insertAgent(db, {
+      name: "h",
+      workstream: "auth",
+      paneId: HERDR,
+      ...(channel !== undefined ? { channel, cli: channel === "hooks" ? "claude" : "codex" } : {}),
+    });
+    addTask(db, { localId: "job", workstream: "auth", title: "Job" });
+    await claimTask(db, "job", { workstream: "auth", agentName: "h" });
+    return row;
+  };
+  const kept = (row: ReturnType<typeof insertAgent>) => {
+    expect(getAgent(db, "h", "auth")).toEqual(row);
+    expect(getTask(db, "job", "auth")).toMatchObject({
+      status: "IN_PROGRESS",
+      ownerId: row.incarnation,
+    });
+  };
+  /** No call to the live backend names the herdr pane. */
+  const untouched = () => expect(mux?.calls.some((c) => c.includes(HERDR))).toBe(false);
+
+  it.each(BACKENDS)("%s: close without --force refuses, keeping row and task", async (active) => {
+    const row = await owned();
+    mux = installMux(active, empty(active));
+    const err = await closeAgent(db, "h", { workstream: "auth" }).catch((e) => e);
+    expect(err).toBeInstanceOf(RetiredPaneError);
+    expect(err.message).toContain("retired herdr pane");
+    expect(err.message).toContain("mu agent close h -w auth --force");
+    kept(row);
+    untouched();
+  });
+
+  it.each(BACKENDS)("%s: close --force drops the row and reopens its task", async (active) => {
+    await owned();
+    mux = installMux(active, empty(active));
+    const r = await closeAgent(db, "h", { workstream: "auth", force: true });
+    expect(r.deletedRow).toBe(true);
+    expect(getAgent(db, "h", "auth")).toBeUndefined();
+    expect(getTask(db, "job", "auth")).toMatchObject({ status: "OPEN", ownerId: null });
+    untouched();
+  });
+
+  it.each(BACKENDS)("%s: teardown keeps the row as retired, never dead", async (active) => {
+    const row = await owned();
+    mux = installMux(active, empty(active));
+    const r = await teardownWorkstream(db, {
+      workstream: "auth",
+      ifRevision: workstreamRevision(db, "auth"),
+    });
+    expect(r.deletedAgents).toBe(0);
+    expect(r.orphanedAgents).toEqual([{ name: "h", paneId: HERDR, reason: "retired" }]);
+    // A torn-down workstream hides its rows from getAgent: read the tables.
+    expect(db.prepare("SELECT id, pane_id FROM agents WHERE name = 'h'").all()).toEqual([
+      { id: row.incarnation, pane_id: HERDR },
+    ]);
+    expect(db.prepare("SELECT status, owner_id FROM tasks WHERE local_id = 'job'").all()).toEqual([
+      { status: "IN_PROGRESS", owner_id: row.incarnation },
+    ]);
+    untouched();
+  });
+
+  it.each(BACKENDS)("%s: read refuses with the retired-herdr message", async (active) => {
+    await owned();
+    mux = installMux(active, empty(active));
+    const err = await readAgent(db, "h", { workstream: "auth" }).catch((e) => e);
+    expect(err).toBeInstanceOf(RetiredPaneError);
+    expect(err.message).toContain("agent h's pane w1:p2 is a retired herdr pane");
+    untouched();
+  });
+
+  it.each(
+    BACKENDS.flatMap((b) => ([undefined, "mux", "hooks"] as const).map((c) => [b, c] as const)),
+  )("%s: send on channel %s refuses with the retired-herdr message", async (active, channel) => {
+    await owned(channel);
+    mux = installMux(active, empty(active));
+    const err = await sendToAgent(db, "h", "hi", { workstream: "auth" }).catch((e) => e);
+    expect(err).toBeInstanceOf(RetiredPaneError);
+    expect(err.message).not.toContain("MU_MUX=rex");
+    untouched();
+  });
+
+  it.each(BACKENDS)("%s: answer --force refuses with the retired-herdr message", async (active) => {
+    await owned("mux");
+    mux = installMux(active, empty(active));
+    const err = await answerAgent(db, "h", ["1"], { workstream: "auth", force: true }).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(RetiredPaneError);
+    untouched();
+  });
+
+  it("muxByName names herdr as retired, not unknown", () => {
+    expect(() => muxByName("herdr" as MuxBackendName)).toThrow(/no longer drives herdr/);
   });
 });

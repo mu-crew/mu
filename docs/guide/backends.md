@@ -107,4 +107,6 @@ mu 6 no longer drives herdr. `MU_MUX=herdr` fails with exit 1, and
 their panes, so reconcile never reaps them as ghosts and never reopens
 their tasks. `mu state` reports them `unknown` (`foreign backend: herdr`),
 and a spawn in their workstream refuses: start a new workstream on tmux
-or Rex.
+or Rex. `agent read`, `send` and `answer` on such a row refuse, and
+`mu workstream teardown` keeps it. Close the herdr pane yourself, then
+drop the row with `mu agent close <name> --force`.

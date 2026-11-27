@@ -331,13 +331,15 @@ export async function cmdTeardown(
     console.log("");
     console.log(
       pc.yellow(
-        `KEPT ${result.orphanedAgents.length} agent row(s): the recorded pane is still alive (or could not be checked): ${result.orphanedAgents.map((o) => `${o.name} (${o.paneId})`).join(", ")}`,
+        `KEPT ${result.orphanedAgents.length} agent row(s): the recorded pane is still alive, could not be checked, or is a retired herdr pane: ${result.orphanedAgents.map((o) => `${o.name} (${o.paneId}${o.reason === "retired" ? ", retired herdr" : ""})`).join(", ")}`,
       ),
     );
     for (const o of result.orphanedAgents) {
       console.log(
         pc.dim(
-          `  once its pane is gone, preview its close: mu agent close ${o.name} -w ${workstream}`,
+          o.reason === "retired"
+            ? `  mu 6 no longer drives herdr; drop the row: mu agent close ${o.name} -w ${workstream} --force`
+            : `  once its pane is gone, preview its close: mu agent close ${o.name} -w ${workstream}`,
         ),
       );
     }

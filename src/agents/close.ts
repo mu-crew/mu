@@ -49,7 +49,8 @@ import {
   workspaceHost,
 } from "../local-loop.js";
 import { emitEvent } from "../logs.js";
-import type { MuxBackend } from "../mux/types.js";
+import { isRetiredPane } from "../mux/binding.js";
+import { type MuxBackend, RetiredPaneError } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { deleteRecoveryById, selectRemoteRecovery } from "../remote-recovery.js";
 import { assertRemoteWorktreeReleasable, closeRemoteWorktree } from "../remote-worktree.js";
@@ -456,6 +457,11 @@ async function closeLocked(
     });
   };
   const agent = getAgentForCleanup(db, name, opts.workstream);
+  // A retired herdr pane can be neither killed nor proven gone: only --force drops its row.
+  const retired = agent !== undefined && isRetiredPane(agent.paneId);
+  if (retired && opts.force !== true) {
+    throw new RetiredPaneError(agent.paneId, name, opts.workstream);
+  }
   const orphan = agent ? undefined : getWorktreeFor(db, opts.workstream, name);
   const nothing: CloseAgentResult = { killedPane: false, deletedRow: false, worktree: null };
   if (agent === undefined || opts.recoveryId !== undefined) {
@@ -570,7 +576,11 @@ async function closeLocked(
   // to name: nothing to kill.
   // A pane another tmux server holds under the row's id is not the agent's: never killed.
   // The identity rides in the kill itself (one tmux call): no restart can land between check and kill.
-  if (getAgentForCleanup(db, name, opts.workstream) !== undefined && mux !== undefined) {
+  if (
+    !retired &&
+    getAgentForCleanup(db, name, opts.workstream) !== undefined &&
+    mux !== undefined
+  ) {
     await killView(mux, agent.paneId, agent.paneIdentity).catch(() => {
       /* idempotent — pane may already be gone, or the mux with it */
     });
@@ -583,7 +593,7 @@ async function closeLocked(
   // had a pane. Past this check the pane is gone (proven, or forced).
   let alive: boolean | "unknown" = false;
   let why: string | undefined;
-  if (!isPendingPaneId(agent.paneId)) {
+  if (!isPendingPaneId(agent.paneId) && !retired) {
     if (mux === undefined) {
       alive = "unknown";
       why = "no multiplexer answers";

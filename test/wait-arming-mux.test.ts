@@ -18,7 +18,11 @@ vi.mock("../src/channels/deliver.js", async (orig) => {
       o: { onUndelivered?: (w: unknown) => void },
     ) => {
       if (hook.mode === "undelivered") {
-        o.onUndelivered?.({ paneId: "%1", reason: "paste-vanished", message: "never registered" });
+        o.onUndelivered?.({
+          paneId: "%1",
+          reason: "unconfirmed",
+          message: "no hook event confirmed it",
+        });
       }
       return { transport: "mux" };
     },

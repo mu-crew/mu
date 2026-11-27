@@ -11,8 +11,6 @@ const SERVER = "4242|1700000000";
 setMuxForTests({
   ...tmuxBackend,
   serverIdentity: async () => SERVER,
-  runsShellCommand: true,
-  spawnAgentWaitsReady: false,
   anchorsPanes: false,
   ensureSession: async () => ({ created: false }),
   spawnAgent: async (o) => {

@@ -169,6 +169,7 @@ import { getCarrierJobByName } from "./carrier-jobs.js";
 import type { CtlTool } from "./channels/index.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
 import { viewCapture } from "./jobs/view.js";
+import { assertDrivablePane } from "./mux/binding.js";
 import type { CaptureOptions, MuxPane } from "./mux.js";
 import { resolveActorIdentity } from "./tasks/claim.js";
 import { ensureWorkstream, isScratchWorkstream } from "./workstream.js";
@@ -817,6 +818,7 @@ export async function readAgent(
 ): Promise<string> {
   const agent = getAgent(db, name, opts.workstream);
   if (!agent) throw new AgentNotFoundError(name);
+  assertDrivablePane(agent.paneId, name, opts.workstream);
   // Load-bearing: the scrollback IS the output of this verb.
   return viewCapture(agent.paneId, agent.paneIdentity, opts);
 }
