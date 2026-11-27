@@ -11,7 +11,6 @@
 // pi agents use the control socket (src/channels/ctl-deliver.ts).
 
 import { basename } from "node:path";
-import { execFileCapture } from "../exec-file.js";
 import { insideAgent } from "../harnesses.js";
 import { say } from "../messages.js";
 import { shellQuote, shellWord } from "../shell-quote.js";
@@ -33,6 +32,7 @@ import {
   type CrewTags,
   crewPaneOptions,
   type EnsureSessionResult,
+  execMuxCall,
   MU_PLACEHOLDER_WINDOW,
   type MuxBackend,
   type MuxCommand,
@@ -151,8 +151,7 @@ function tmuxGlobalFlags(): readonly string[] {
   return ["-L", socket, "-f", "/dev/null"];
 }
 
-const realExecutor: TmuxExecutor = (args) =>
-  execFileCapture("tmux", [...tmuxGlobalFlags(), ...args]);
+const realExecutor: TmuxExecutor = (args) => execMuxCall("tmux", [...tmuxGlobalFlags(), ...args]);
 
 let currentExecutor: TmuxExecutor = realExecutor;
 

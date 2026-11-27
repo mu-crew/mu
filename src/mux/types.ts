@@ -19,12 +19,37 @@
 // Same shape as src/vcs/: a types module, one file per impl, and an
 // index that dispatches. See docs/VOCABULARY.md § "mux backend".
 
+import { type ExecFileResult, execFileCapture } from "../exec-file.js";
 import { say } from "../messages.js";
 import { shellWord } from "../shell-quote.js";
 import type { ActionPaneRef, PaneRef, VerifiedPaneRef } from "./pane-ref.js";
 
 /** The multiplexers mu can drive. */
 export type MuxBackendName = "rex" | "tmux";
+
+/** Default bound on one tmux or rex CLI call: past it the server is wedged, not slow. */
+const MUX_CALL_TIMEOUT_MS = 30_000;
+let muxCallTimeoutMs = MUX_CALL_TIMEOUT_MS;
+
+/** Tests shorten the bound (undefined restores the default). */
+export function setMuxCallTimeoutForTests(ms: number | undefined): void {
+  muxCallTimeoutMs = ms ?? MUX_CALL_TIMEOUT_MS;
+}
+
+/**
+ * One multiplexer CLI call, bounded: a wedged server (or a hanging config hook) must not
+ * hang mu, nor a strict agent/spawn lock it holds. A timeout is a failure (exit null) whose
+ * stderr says so, which no "pane or server gone" match accepts: the backend's error throws.
+ */
+export async function execMuxCall(
+  binary: string,
+  args: readonly string[],
+): Promise<ExecFileResult> {
+  const r = await execFileCapture(binary, args, { timeoutMs: muxCallTimeoutMs });
+  if (r.timedOut !== true) return r;
+  const note = `${binary} timed out after ${muxCallTimeoutMs}ms (a wedged server?)`;
+  return { ...r, stderr: r.stderr === "" ? note : `${r.stderr}\n${note}` };
+}
 
 /** Runtime states a mux backend can report directly for one pane. */
 export type MuxPaneStatus = "busy" | "needs_input" | "needs_permission";

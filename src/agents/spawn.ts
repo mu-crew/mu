@@ -9,10 +9,8 @@
 // exists before the pane, while the agent name must already be claimed) —
 // see prestageWorktree.
 
-import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { promisify } from "node:util";
 import {
   type AgentRow,
   deleteAgent,
@@ -40,6 +38,7 @@ import {
   tornDownAtOf,
   WorkstreamTornDownError,
 } from "../db.js";
+import { execFileCapture } from "../exec-file.js";
 import { envVarNameForCli, harnessOfCli, speaksMuCtl } from "../harnesses.js";
 import { resolveHost } from "../host-provider.js";
 import {
@@ -209,7 +208,7 @@ export interface CommandResolutionResult {
 
 export type CommandResolver = (command: string) => Promise<CommandResolutionResult>;
 
-const execFileP = promisify(execFile);
+const COMMAND_LOOKUP_TIMEOUT_MS = 5_000;
 
 /** Default resolver: shell-out to `command -v <binary>` (POSIX-portable
  *  equivalent of `which`). Returns ok=false when the lookup exits
@@ -218,18 +217,15 @@ const execFileP = promisify(execFile);
 async function defaultCommandResolver(command: string): Promise<CommandResolutionResult> {
   const binary = parseFirstToken(command);
   if (binary === "") return { ok: false, binary };
-  try {
-    // `command -v` is the POSIX builtin lookup. Spawned via /bin/sh
-    // -c so the builtin is available (it's not an external program).
-    const { stdout } = await execFileP("/bin/sh", ["-c", `command -v -- ${shellQuote(binary)}`], {
-      env: process.env,
-    });
-    const resolvedPath = stdout.trim();
-    if (resolvedPath === "") return { ok: false, binary };
-    return { ok: true, binary, resolvedPath };
-  } catch {
-    return { ok: false, binary };
-  }
+  // `command -v` is the POSIX builtin lookup. Spawned via /bin/sh
+  // -c so the builtin is available (it's not an external program).
+  // Bounded: a wedged shell must not hold the spawn lock forever.
+  const r = await execFileCapture("/bin/sh", ["-c", `command -v -- ${shellQuote(binary)}`], {
+    timeoutMs: COMMAND_LOOKUP_TIMEOUT_MS,
+  });
+  const resolvedPath = r.stdout.trim();
+  if (r.exitCode !== 0 || resolvedPath === "") return { ok: false, binary };
+  return { ok: true, binary, resolvedPath };
 }
 
 /** Single-quote a token for /bin/sh -c. Only used on the binary name,

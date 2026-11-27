@@ -23,7 +23,6 @@
 
 import { constants } from "node:os";
 import { basename, join } from "node:path";
-import { execFileCapture } from "../exec-file.js";
 import { say } from "../messages.js";
 import { shellQuote } from "../shell-quote.js";
 import { type ActionPaneRef, nativePaneId } from "./pane-ref.js";
@@ -35,6 +34,7 @@ import {
   type CrewIdentity,
   type CrewTags,
   type EnsureSessionResult,
+  execMuxCall,
   MU_PLACEHOLDER_WINDOW,
   type MuxBackend,
   type MuxCommand,
@@ -99,7 +99,7 @@ function rexBinary(): string {
 }
 
 const realExecutor: RexExecutor = (args) =>
-  execFileCapture(rexBinary(), [...rexGlobalFlags(), ...args]);
+  execMuxCall(rexBinary(), [...rexGlobalFlags(), ...args]);
 
 let currentExecutor: RexExecutor = realExecutor;
 
