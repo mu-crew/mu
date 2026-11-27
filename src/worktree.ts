@@ -350,7 +350,7 @@ export interface ReleasedWorktree {
   action: "removed" | "kept-branch" | "discarded" | "gone";
   /** The branch made to keep unmerged commits. */
   branch?: string;
-  /** Where the tree's work stands, read before its row and dir went (local trees only). */
+  /** Where the tree's work stands, read before its row and dir went (a remote tree's on its host). */
   landing?: Landing;
   /** Processes still in the tree when it was removed (their cwd, a read-only file; or, under `force`, a writer). */
   warnings?: string[];
@@ -410,8 +410,9 @@ export function readCloseLanding(row: { intent: string | null; payload: string }
   } catch {
     return null;
   }
-  const l = (bag as { landing?: unknown } | null)?.landing;
-  if (l === null || typeof l !== "object") return null;
+  if (bag === null || typeof bag !== "object" || Array.isArray(bag)) return null;
+  const l = (bag as { landing?: unknown }).landing;
+  if (l === null || typeof l !== "object" || Array.isArray(l)) return null;
   const f = (k: string): string | null => {
     const v = (l as Record<string, unknown>)[k];
     return typeof v === "string" ? v : null;

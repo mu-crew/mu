@@ -116,6 +116,42 @@ gitDescribe("agent.close records the landing", () => {
     expect(gitIn(root, "rev-parse", branch)).toBe(head);
   });
 
+  it("a detached root: target_ref is null, never the pseudo-ref HEAD", async () => {
+    const base = gitIn(root, "rev-parse", "HEAD");
+    gitIn(root, "checkout", "--detach", base);
+    await spawn("worker-1");
+    const path = worktreePath("auth", "worker-1");
+    expect(getWorktreeAt(db, path)?.targetRef).toBeNull();
+    await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(lastClose().landing).toEqual({
+      repoRoot: root,
+      targetRef: null,
+      baseSha: base,
+      headSha: base,
+      preservedRef: null,
+    });
+  });
+
+  it("--from a sha: target_ref is null", async () => {
+    const base = gitIn(root, "rev-parse", "HEAD");
+    await spawnAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      worktree: true,
+      root,
+      from: base,
+    });
+    expect(getWorktreeAt(db, worktreePath("auth", "worker-1"))?.targetRef).toBeNull();
+  });
+
+  it("readCloseLanding: a JSON array or a non-object landing reads as none", () => {
+    const row = (payload: string) => ({ intent: "agent.close", payload });
+    expect(readCloseLanding(row("[1,2]"))).toBeNull();
+    expect(readCloseLanding(row('{"landing":["x"]}'))).toBeNull();
+    expect(readCloseLanding(row('{"landing":"x"}'))).toBeNull();
+    expect(readCloseLanding(row("agent close w (pane=%1)"))).toBeNull();
+  });
+
   it("an agent without a worktree records a null landing", async () => {
     await spawnAgent(db, { name: "plain-1", workstream: "auth", cwd: root });
     await closeAgent(db, "plain-1", { workstream: "auth" });

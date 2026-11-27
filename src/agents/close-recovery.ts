@@ -37,8 +37,10 @@ import {
   asideOf,
   assertRemoteWorktreeReleasable,
   closeRemoteWorktree,
+  remoteLanding,
 } from "../remote-worktree.js";
 import { resolveActorIdentity } from "../tasks/claim.js";
+import { closePayload } from "../worktree.js";
 import type { CloseAgentResult, ClosePreview } from "./close.js";
 
 /** Why a close of `rec` would refuse right now, from the registry and the profile alone (no host command); null when it would go on. */
@@ -91,17 +93,23 @@ export async function closeRecovery(
   if (hostLost(db, rec.host)) {
     const deleted = deleteRemoteRecovery(db, rec);
     if (!deleted) assertRecoveryUnchanged(db, rec);
+    // The machine took the tree: its HEAD is unknown, the record knows the rest.
+    const landing = remoteLanding(rec.hostRepo, rec.base);
     emitEvent(
       db,
       rec.workstream,
       "agent.close",
-      `agent close ${rec.name} (recovery ${rec.agentId}, worktree gone: host ${rec.host} is lost)`,
+      closePayload(
+        `agent close ${rec.name} (recovery ${rec.agentId}, worktree gone: host ${rec.host} is lost)`,
+        rec.name,
+        landing,
+      ),
       await resolveActorIdentity(),
     );
     return {
       killedPane: false,
       deletedRow: false,
-      worktree: { path: rec.cwd, action: "gone" },
+      worktree: { path: rec.cwd, action: "gone", landing },
       recovery: { id: rec.agentId, deleted },
     };
   }
@@ -157,7 +165,7 @@ export async function closeRecovery(
     db,
     rec.workstream,
     "agent.close",
-    `agent close ${rec.name} (${bits.join(", ")})`,
+    closePayload(`agent close ${rec.name} (${bits.join(", ")})`, rec.name, worktree.landing),
     await resolveActorIdentity(),
   );
   return {

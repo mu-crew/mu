@@ -24,7 +24,7 @@ import { localMachineId } from "./segments.js";
 import { shellQuote, shellWord } from "./shell-quote.js";
 import { PEER_SHORT_LEN } from "./sync.js";
 import { git } from "./vcs/git.js";
-import type { ReleasedWorktree } from "./worktree.js";
+import type { Landing, ReleasedWorktree } from "./worktree.js";
 
 /** A remote exec step failed or answered nothing mu can use. Exit 5 (substrate). */
 export class RemotePrepareError extends Error {
@@ -567,6 +567,26 @@ export async function closeRemoteWorktree(
 
 type RemoteTree = Parameters<typeof closeRemoteWorktree>[1];
 
+/**
+ * A remote tree's landing: `repoRoot` is the checkout on its host. The ref it
+ * was cut from is not recorded for a remote tree, so `targetRef` is null; so is
+ * `headSha` for a tree already gone.
+ */
+export function remoteLanding(
+  repo: string | null,
+  base: string | null,
+  head: string | null = null,
+  branch?: string,
+): Landing {
+  return {
+    repoRoot: repo,
+    targetRef: null,
+    baseSha: base,
+    headSha: head,
+    preservedRef: branch ?? null,
+  };
+}
+
 interface CloseRemoteWorktreeOptions {
   keepBranch?: boolean;
   paneAlive?: (paneId: string) => Promise<boolean>;
@@ -666,7 +686,7 @@ async function remoteClose(
       );
       const m = lastMatch(observed.out, REMOTE_STATE_RE);
       if (m === null) return refuse("unreadable", `host ${host} named no worktree state`);
-      if (m[1] === "gone") return { path, action: "gone" };
+      if (m[1] === "gone") return { path, action: "gone", landing: remoteLanding(repo, base) };
       const head = m[2];
       if (head === undefined) return refuse("unreadable", `host ${host} named no HEAD`);
       const short = head.slice(0, 12);
@@ -734,11 +754,12 @@ async function remoteClose(
               : `process ${m[2]} on ${host} was still inside ${path}; removed under --force`,
           );
         const said = warnings.length > 0 ? { warnings } : {};
+        const landing = remoteLanding(repo, base, head, branch);
         return branch === undefined
-          ? { path, action: "removed", ...said }
-          : { path, action: "kept-branch", branch, ...said };
+          ? { path, action: "removed", landing, ...said }
+          : { path, action: "kept-branch", branch, landing, ...said };
       }
-      if (r === "gone") return { path, action: "gone" };
+      if (r === "gone") return { path, action: "gone", landing: remoteLanding(repo, base) };
       if (r === "moved")
         return refuse("moved", `HEAD moved while closing (was ${short}); nothing was removed`);
       if (r === "dirty")

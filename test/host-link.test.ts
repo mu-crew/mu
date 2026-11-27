@@ -219,7 +219,7 @@ describe("the remote worktree's exec boundaries", () => {
   };
 
   it("close is two execs under ONE channel", async () => {
-    expect(await closeRemoteWorktree(db, agent)).toEqual({ path: WT, action: "removed" });
+    expect(await closeRemoteWorktree(db, agent)).toMatchObject({ path: WT, action: "removed" });
     const log = channelLog();
     expect(log.map((l) => l.what)).toEqual(["admit", "run", "run"]);
     expect(new Set(log.map((l) => l.token)).size).toBe(1);

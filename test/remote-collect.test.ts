@@ -28,10 +28,12 @@ import {
   HostHandbackError,
   listHostChannels,
 } from "../src/hosts.js";
+import { listLogs } from "../src/logs.js";
 import { resetMux } from "../src/mux.js";
 import { RemoteCloseRefusedError } from "../src/remote-agent.js";
 import { collectRemoteAgent, RemoteCollectUnsupportedError } from "../src/remote-collect.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { readCloseLanding } from "../src/worktree.js";
 import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
@@ -267,6 +269,34 @@ describe("agent close of a remote worktree row", () => {
     expect(rm).toContain(OTHER);
     expect(rm).not.toContain("--force");
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+  });
+
+  it("the agent.close op records the remote landing: host repo, base, observed HEAD, kept branch", async () => {
+    const landing = () => {
+      const row = listLogs(db, { workstream: "auth", intent: "agent.close" }).at(-1);
+      return row === undefined ? undefined : readCloseLanding(row);
+    };
+    await remoteAgent();
+    answer(`MU_STATE clean ${OTHER}`);
+    await close({ keepBranch: true });
+    // No ref is recorded for a remote tree: target_ref is null, never a guess.
+    expect(landing()).toEqual({
+      repoRoot: "/srv/repo",
+      targetRef: null,
+      baseSha: BASE,
+      headSha: OTHER,
+      preservedRef: `mu/auth/worker-1-${OTHER.slice(0, 12)}`,
+    });
+    await remoteAgent();
+    answer("MU_STATE gone");
+    await close();
+    expect(landing()).toEqual({
+      repoRoot: "/srv/repo",
+      targetRef: null,
+      baseSha: BASE,
+      headSha: null,
+      preservedRef: null,
+    });
   });
 
   it("a removal that finds HEAD moved or a branch in the way refuses and keeps the row", async () => {

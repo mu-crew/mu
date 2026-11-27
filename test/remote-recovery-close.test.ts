@@ -29,6 +29,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeAgent, deleteAgent, getAgent, insertAgent, previewClose } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addHost, LOCAL_LOOP_TRANSPORT, removeHost } from "../src/hosts.js";
+import { listLogs } from "../src/logs.js";
 import { asideOf, RemoteCloseRefusedError } from "../src/remote-agent.js";
 import { collectRemoteAgent } from "../src/remote-collect.js";
 import {
@@ -41,6 +42,7 @@ import {
 } from "../src/remote-recovery.js";
 import { agentRevision, RevisionMismatchError } from "../src/revision.js";
 import { reinitWorkstream, teardownWorkstream, workstreamRevision } from "../src/workstream.js";
+import { readCloseLanding } from "../src/worktree.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
@@ -225,6 +227,20 @@ describe("apply", () => {
     expect((err as Error).message).toContain(`--recovery ${id} --force`);
     expect(execCalls()[1]).not.toContain("MU_WARN");
     expect(records().map((x) => x.agentId)).toEqual([id]);
+  });
+
+  it("the agent.close op records the landing the record knows", async () => {
+    orphaned();
+    answer(`MU_STATE clean ${OTHER}`);
+    await close({ keepBranch: true });
+    const row = listLogs(db, { workstream: "auth", intent: "agent.close" }).at(-1);
+    expect(row === undefined ? undefined : readCloseLanding(row)).toEqual({
+      repoRoot: "/srv/repo",
+      targetRef: null,
+      baseSha: BASE,
+      headSha: OTHER,
+      preservedRef: `mu/auth/worker-1-${OTHER.slice(0, 12)}`,
+    });
   });
 
   it("a worktree already gone deletes the record", async () => {
