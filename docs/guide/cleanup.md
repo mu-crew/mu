@@ -55,7 +55,7 @@ To reuse the name, run `mu workstream init auth`. It previews what it
 will permanently delete (`will permanently delete torn-down auth: N tasks,
 M notes; rev=<n>`); `mu workstream init auth --if <n>` deletes the old
 rows and creates the new workstream. It refuses (exit 4) while the old
-tmux session is alive, and when the mux cannot be asked.
+session (tmux or Rex) is alive, and when the mux cannot be asked.
 
 To sweep every workstream that has no tasks, agents, or worktrees:
 

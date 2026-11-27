@@ -59,7 +59,7 @@ events through `emitEvent`. `appendLog` writes operator prose
   safety net, not a supported path (plain `sqlite3` defaults to
   `foreign_keys=0`, so cascades are skipped). Consequences:
   - The **op context** is the one-row main table `op_ctx`; the triggers
-    read `applying`, `group_id`, `actor` and `intent` from it. 3.x kept it
+    read `applying`, `group_id`, `actor`, `intent`, `actor_session`, `actor_anchor` and `actor_role` from it. 3.x kept it
     in a per-connection TEMP table, which a main trigger cannot reference.
   - DELETE keys are captured inline, with the parent stashing its
     natural key in the main table `op_dying` first (an AFTER DELETE

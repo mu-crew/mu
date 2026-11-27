@@ -77,7 +77,8 @@ default. Spawn warns and skips `--send`: attach the pane, answer it, then
 
 ## You closed your terminal
 
-The tmux session keeps running. Reattach with `tmux attach -t mu-auth`.
+The mux session keeps running. On tmux, reattach with `tmux attach -t mu-auth`
+(on Rex, see [backends](backends.md)).
 Every `mu` command is a short process that reads the DB, so nothing
 needs restarting.
 

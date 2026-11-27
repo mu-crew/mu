@@ -142,7 +142,8 @@ mu never infers agent state from pane text. Each state source reports it:
 | claude, codex, cursor-agent, muse on tmux (`hooks`), local; pi on its `MU_PI_CHANNEL=hooks` fallback | clear the input line, paste, then Enter; confirmed by the harness's `run_count`, never resent | murmur's pane inbox, fed by the harness's own hooks |
 | claude, codex, cursor-agent, muse on tmux (`hooks`), `--host` | clear the input line, paste, then Enter; `ack: sent`, confirmed by the next wait or send gate's read of the node | murmur on the node, relayed into the local pane's inbox |
 | other CLI on Rex | mux (paste, then Enter) | the agent's own OSC 7501 report |
-| other CLI on tmux | none: send refused | murmur |
+| other CLI on vtmux | none: send refused | the pane's native OSC 7501 report |
+| other CLI on vanilla tmux | none: send refused | murmur |
 
 With no source, state is `unknown` with a reason. A pi agent whose
 socket does not answer fails loudly; mu never falls back to pasting for
@@ -221,7 +222,7 @@ mu coordinates agents and does not reason about them. It does not own:
 - **Prompts.** No system-prompt templates and no role registry. The
   prompt is the spawn command plus the first message.
 - **Tool routing.** The agent CLI owns tool allowlists, MCP servers, and
-  extensions. mu adds only a local worker's auto-approve flag
+  extensions. mu adds only a worker's auto-approve flag (local or remote)
   and folder trust for a worktree it made, and skips the flag when the
   command already picks a mode.
 - **Output interpretation.** mu does not parse panes for state, facts,

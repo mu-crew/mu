@@ -4,7 +4,7 @@
 
 import type { Command } from "commander";
 import { type RetagResult, retagAgents } from "../agents/crew-tags.js";
-import { emitJson, handle, JSON_OPT, WORKSTREAM_OPT } from "../cli.js";
+import { emitJson, handle, JSON_OPT } from "../cli.js";
 import type { Db } from "../db.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
@@ -69,7 +69,7 @@ export function wireRetagCommand(agent: Command): void {
     .description(
       "Rewrite the crew tags murmur reads (tmux @mu_*, Rex block label) on live agents missing them; idempotent. No names: every agent of -w (else all).",
     )
-    .option(...WORKSTREAM_OPT)
+    .option("-w, --workstream <name>", "workstream (optional: without it, every agent)")
     .option(...JSON_OPT)
     .action(function (names: string[]) {
       const opts = (this as Command).opts() as { workstream?: string; json?: boolean };

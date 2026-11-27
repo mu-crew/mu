@@ -187,8 +187,8 @@ probes `refused`, and `mu agent close` or the reaper deletes it.
 
 `extension/delegate.ts` registers `mu_delegate`, `mu_delegate_reissue`
 and `mu_delegate_cancel` in the operator's own pi. They are hidden
-when `MU_MANAGED_AGENT` is set (inside a mu-spawned pane) or
-`MU_DELEGATE=0`. The tools
+when `MU_MANAGED_AGENT` is set (inside a mu-spawned pane, unless
+`MU_ORCHESTRATOR=1`) or `MU_DELEGATE=0`. The tools
 shell out to the `mu` CLI and keep no state of their own: a call runs
 `mu delegates register` (the `kind=delegate` task and call row), then one
 `mu agent spawn --next-free --task <task> --attempt <task> --send <text> --json`

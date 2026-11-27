@@ -109,7 +109,7 @@ Retention is a creation option (`exit.on_completion: false`), so a
 retained pane needs no placeholder respawn; a plain pane sets the quick-exit
 hold to 0 so it closes on any exit, like a tmux pane.
 
-- **tmux.** After `MU_SPAWN_LIVENESS_MS` (default 1500, `0` skips) mu
+- **tmux and Rex.** After `MU_SPAWN_LIVENESS_MS` (default 1500, `0` skips) mu
   verifies the pane survived and scans its tail for provider or auth
   startup errors. mu does not wait for murmur to claim the pane: state
   reads before the first claim report `unknown`. A pi agent skips the
@@ -161,7 +161,8 @@ Runtime state is read on demand and never persisted.
 | --- | --- |
 | pi (`expectsCtl`) | its control socket, probed in parallel for all pi agents |
 | other CLI on Rex | `paneStatus()`: the terminal's OSC 7501 records (`program_status`), only those whose `owner.pid` is the block's own program (a tool the agent runs reports into the same terminal). A blocked record wins (`kind=permission` → `needs_permission`, else `needs_input`), then the root record (`working` → `busy`, at rest → `needs_input`) |
-| other CLI on tmux | murmur: one `list-panes -a` reads `@murmur_pane_state` / `@murmur_pane_since`; agents without a local option fall back to `murmur status --json` (10 s timeout), cached 10s |
+| other CLI on vtmux | `paneStatus()`: the pane's native OSC 7501 records, as on Rex (no murmur hooks; they carry no session or run count) |
+| other CLI on vanilla tmux | murmur: one `list-panes -a` reads `@murmur_pane_state` / `@murmur_pane_since`; agents without a local option fall back to `murmur status --json` (10 s timeout), cached 10s |
 
 - ctl `idle` maps to `needs_input`. murmur maps `working` → `busy`,
   `blocked` → `needs_permission`, and `idle` / `done` / `crashed` →

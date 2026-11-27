@@ -12,7 +12,9 @@ mu on tmux wants **vtmux >= 3.8-rc3** with `set -s vtmux-program-status on`
 (and `set -s vtmux-program-resume on` for session resume). vtmux keeps the
 OSC 7501 (program status) records that pi, Claude Code and Codex emit natively,
 and mu reads them directly through `paneStatus()`, as it does on Rex. No murmur
-hooks are needed.
+hooks are needed for state and the send gate; confirmed `hooks`-channel sends,
+`--fresh`, `mu wait` turn settles and `CLOSE:` blocks for non-pi harnesses
+still need `murmur init`.
 
 On **vanilla tmux 3.8**, which drops both sequences, pi workers still work
 fully via the `ctl` socket (only the `mu/delegates` window-tab glyph is

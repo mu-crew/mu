@@ -99,9 +99,10 @@ same name can exist in two. Every public function taking such a name
 also takes the workstream; internal SQL filters by
 `(workstream_id, name)`.
 
-**`--json` keeps operator-facing names.** Surrogate ids never appear in
-`--json`, error payloads, log lines or exports. Exposing them would
-bring back a global namespace.
+**`--json` keeps operator-facing names.** A row's surrogate
+ids appear in `--json` only as `workstream_id`, `owner_id` and an agent's `id`
+(its incarnation), never in error payloads, log lines or exports.
+Operator-facing names stay the keys.
 
 ## State of truth
 

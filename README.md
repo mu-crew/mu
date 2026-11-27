@@ -70,8 +70,10 @@ You need:
 On **vtmux >= 3.8-rc3** with `set -s vtmux-program-status on` and
 `set -s vtmux-program-resume on`, mu reads each pane's own OSC 7501 report
 natively (`paneStatus()`): Claude Code and Codex send one, pi too, and
-Cursor is bridged by a small hook. No murmur hooks are needed. On Rex it is the
-same report.
+Cursor is bridged by a small hook. That gives pane state and the send gate
+without murmur hooks; confirmed sends, `--fresh`, `mu wait` turn settles and
+`CLOSE:` blocks for claude, codex, cursor-agent and muse still need
+`murmur init`. On Rex it is the same report.
 
 **Vanilla tmux 3.8** drops OSC 7501 and OSC 7577. pi workers still work fully
 through pi's `ctl` socket (only the `mu/delegates` window-tab glyph is absent).

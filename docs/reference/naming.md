@@ -88,7 +88,7 @@ fixtures may use human names.
 
 The state dir is `MU_STATE_DIR`, else `$XDG_STATE_HOME/mu5`, else
 `~/.local/state/mu5`. (`mu-next` is mu 4's and `mu` is 3.x's; separate names keep
-each major off another's DB. mu 5 imports `mu-next/mu.db` once: the
+mu 3 and mu 4 off another's DB; mu 5 and 6 share `mu5`. mu 5 imports `mu-next/mu.db` once: the
 [state import](../guide/upgrade.md#upgrade-from-4x-to-5).)
 
 | Path | Contents |
