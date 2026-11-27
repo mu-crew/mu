@@ -26,12 +26,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Changed
 
+- **BREAKING (SDK): `LogRow.workstreamName` is the workstream**, the op key's part before the first `/` (`null` for machine-wide rows), from `listLogs` and `appendLog` alike; `LogRow.key` keeps the raw `ops.key`. Callers that read `workstreamName` as the key must read `key`. **`RenderableOp.workstreamName` is renamed `key`** (the input of `renderOp`, `renderOpLine` and `opSubject`).
 - A row a herdr pane left (pane id `w1:p1`) stays recognised as a **retired backend** (`src/mux/binding.ts`): it is always foreign, so `reconcile` in full mode never reaps it as a ghost or reopens its task, `mu state` reports it `unknown` (`foreign backend: herdr`), and a spawn in its workstream refuses without offering `MU_MUX=herdr`. Every pane-addressed verb on such a row (`agent read`, `send`, `answer`, interrupt/abort, kill and pane probes) refuses with one `RetiredPaneError` (exit 5, `mux.retired_pane`) instead of reaching tmux or Rex with a foreign id. `mu agent close` without `--force` refuses the same way (no row or task touched); `--force` drops the row and reopens its tasks. `mu workstream teardown` keeps the row (`orphanedAgents` reason `retired`) instead of reading the pane as dead. `muxByName("herdr")` throws the retirement message. No state-directory change: the rows are kept as they are.
 - `agent.send_unsupported` (a non-pi, non-hook CLI on tmux) points to Rex (`MU_MUX=rex`) instead of herdr.
-
-### Fixed
-
-- `LogRow.workstreamName` holds the real workstream name (the key's part before the first `/`), not the raw `ops.key`; `key` is unchanged.
 
 ## [5.7.0] — 2026-11-27
 
