@@ -72,7 +72,9 @@ events through `emitEvent`. `appendLog` writes operator prose
     equals generated SQL, so `mu doctor` compares a sha256 of each.
   - Emitting triggers abort below SQLite 3.42 (`unixepoch('subsec')`).
 - **Op context** (`src/op-context.ts`): `withOpContext(db, {intent,
-  actor, group}, fn)` labels every op in a scope. The outermost scope
+  actor, group, actorRole, workstream}, fn)` labels every op in a scope
+  (`actorRole` fills `ops.actor_role`; `listSessionRoles` in `src/logs.ts`
+  aggregates it per session and workstream). The outermost scope
   **owns the transaction**: `BEGIN IMMEDIATE`, set `op_ctx`, run, reset
   it to defaults, `COMMIT` (a throw is `ROLLBACK`). Because `op_ctx` is
   shared by every connection, the context may exist only inside that

@@ -112,7 +112,8 @@ options, Rex block and session labels). A spawn that could not set them
 warns once; `mu doctor`'s `crew tags` row lists every live agent still
 missing them. `mu agent retag [-w <ws>] [name...]` writes them again and
 leaves correct panes alone. A Rex session not labelled `mu-<ws>` is
-reported `partial`: rename the session in Rex. A row from before mu
+reported `partial`: rename the session in Rex. A Rex pane's role comes from
+the pi extension's OSC 7501 `mu/role` report, which retag does not write. A row from before mu
 recorded the tmux server is `unverified` and never written (its `%N` may be
 another server's pane): respawn it.
 

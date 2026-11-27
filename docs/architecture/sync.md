@@ -143,6 +143,10 @@ every verb.
 - **Flush on the error path too.** A verb may commit ops before
   throwing. Those ops are canonical, so withholding them would make
   this machine's history depend on the exit code.
+- **A development build does not flush the live DB.** `refuseDevBuildSync`
+  (`src/dev-build.ts`) throws `DevBuildSyncError` for a checkout or
+  `MU_DEV_BUILD=1` build on the default DB: `mu sync` exits 4, the ambient
+  flush warns. `MU_ALLOW_MIGRATE=1` opts out.
 - **Refuse a DB inside `MU_SYNC_DIR`, before `openDb`.** `handle()`
   throws `DbInsideSyncDirError` (exit 4) for every verb, ambient or not,
   so nothing is created or written. The check is path-based, resolves

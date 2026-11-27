@@ -104,6 +104,10 @@ with `SchemaTooNewError`. Both exit 4 and leave the file alone, so
 pointing mu 5 at a mu 4 or 3.x DB (`MU_DB_PATH`) is safe. Back up an old
 DB and move it aside.
 
+A development build (see below) refuses to upgrade your default DB
+(`DevBuildMigrationError`, exit 4, nothing written). Run it against a
+scratch state dir, or set `MU_ALLOW_MIGRATE=1` to opt out.
+
 ## Run mu from a checkout
 
 ```bash
@@ -114,3 +118,8 @@ alias mu="node $PWD/dist/cli.js"
 Or run `npm install -g .` in the checkout. Its `prepare` script builds
 first. To load the checkout as the pi package instead of the installed
 one, run `pi install /path/to/checkout`.
+
+A checkout build counts as a development build: it will not migrate or
+sync-publish the live DB. Isolate it first with `unset MU_DB_PATH
+MU_SYNC_DIR; export MU_STATE_DIR=$(mktemp -d)`; `MU_ALLOW_MIGRATE=1`
+overrides the guard.

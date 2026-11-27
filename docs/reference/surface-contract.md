@@ -65,7 +65,8 @@ their guarantees:
   partial|failed` or, never written, `gone|retired|foreign|unverified|
   not_found`. A legacy tmux row (no `pane_identity`) is `unverified`: its
   `%N` may be another server's pane. An unknown name exits 3, a failed
-  write 1.
+  write 1. A Rex pane's role comes from the pi extension's OSC 7501
+  `mu/role` report, not from retag.
 - **Executor.** `mu task auto` and `mu next` (`--dry`, `--hold`,
   `--workers`, `--refute`), `dispatch_host`.
 - **Delegates.** A `mu_delegate` call is a `kind=delegate` task with a
@@ -208,12 +209,17 @@ resend.
 **Guards.** `--if <rev>` on membership-changing and destructive verbs;
 teardown and `agent close` print a preview revision first. A wrong id
 returns read-only candidates, never a fuzzy write. An ambiguous ctl
-delivery returns a receipt to check (`msgId`), never a resend.
+delivery returns a receipt to check (`msgId`), never a resend. A
+development build (git checkout or worktree, or `MU_DEV_BUILD=1`) refuses
+to migrate the default DB (`DevBuildMigrationError`, exit 4) unless
+`MU_ALLOW_MIGRATE=1`.
 
 **Sync.** Every verb ingests peer ops before its body and flushes its
 own after, on the error path too; `mu db query` writes flush as well. A
 DB inside `MU_SYNC_DIR` is refused before anything is opened, and so is
-a `MU_SYNC_DIR` holding a 3.x segment (exit 4, nothing written).
+a `MU_SYNC_DIR` holding a 3.x segment (exit 4, nothing written). A development build also refuses to flush the
+default DB (`DevBuildSyncError`, exit 4; ambient flush warns) unless
+`MU_ALLOW_MIGRATE=1`.
 
 **CLOSE block.** Final lines of a settled pi run's `lastText`, `task=`
 the agent's own task; applied once per (agent, incarnation, runs) as

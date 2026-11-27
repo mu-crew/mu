@@ -76,7 +76,7 @@ The `MuxBackend` surface is `available`, `ensureSession`,
 `killPaneCommand` (the argv that kills a pane by hand on the same server, for a
 diagnostic naming a pane mu could not prove gone), `capture`, `attachCommands` and `healthCheck`, plus optional `paneStatus`
 (vtmux and Rex) and `sendToPane` (Rex only), `paneResult` (an exited pane's status, for
-remote command gates), `panePid` (tmux: the pane's first process, so a close
+remote command gates), `readCrewTags` and `writeCrewTags` (the crew tags `mu doctor` reads and `mu agent retag` rewrites), `panePid` (tmux and Rex: the pane's first process, so a close
 preview leaves the agent's own processes out of the worktree holders), `pasteToPane` and `sendKeys` (tmux:
 the `hooks` channel's clear-paste-Enter send and `mu agent answer`'s keys), and `currentSessionName`
 (only the suggestion in the missing-`-w` error).

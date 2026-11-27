@@ -140,7 +140,7 @@ are re-export hubs.
 | `src/rebuild.ts` | copy the whole log into a new DB file, then `projectLog` it |
 | `src/compact.ts` | `mu db compact` (blank redundant note-tombstone payloads) and `mu db forget` (drop a torn-down workstream's ops); this machine only |
 | `src/drift.ts` | cheap invariant (every row has an op) and `--deep` rebuild-diff |
-| `src/logs.ts` | typed reader over `ops`; `appendLog` and `emitEvent`, the writes triggers cannot cover |
+| `src/logs.ts` | typed reader over `ops`; `listSessionRoles` (which sessions acted as which role, from `ops.actor_role`), `appendLog` and `emitEvent`, the writes triggers cannot cover |
 | `src/log-render.ts` | the one op-to-prose formatter (`renderOp`), shared by the CLI renderers; never clips free text; an unknown historical intent renders generically (`op put|del`, intent, kind, changed field names) |
 
 ### Sync and doctor checks
