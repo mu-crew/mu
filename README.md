@@ -1,7 +1,8 @@
 # mu
 
 **A small control plane for a crew of AI coding agents working in
-parallel.** Agents run in multiplexer panes you can attach to. Work is a
+parallel.** Agents run in tmux ([vtmux](https://github.com/martintrojer/vtmux))
+or [Rex](https://www.superlogical.com/rex) panes you can attach to. Work is a
 task DAG in SQLite. Each agent gets its own git worktree.
 
 - **Parallel work that does not collide.** Per-agent git worktrees and a task DAG with
@@ -17,6 +18,12 @@ task DAG in SQLite. Each agent gets its own git worktree.
   and abort are exact, locally and over ssh. The other four are driven by
   paste and read from their own hook events, confirmed by the turn count.
   Each pane stays the agent's normal TUI.
+- **Two first-class multiplexers.** The same verbs drive a crew in vtmux
+  or in Rex. Both keep the OSC 7501/7577 records that pi, Claude Code and
+  Codex emit, so mu reads every agent's state straight from the terminal;
+  pi stays exact over its control socket on both. Rex limits (lease and
+  plugin job views are tmux-only; attach switches Rex.app) are in
+  [backends](docs/guide/backends.md).
 - **Placement per agent.** One crew can mix local workers, remote
   workspaces and remote loops. The DB stays local. See
   [placement](docs/guide/placement.md).
@@ -35,8 +42,8 @@ task DAG in SQLite. Each agent gets its own git worktree.
 Every read path has `--json`, and every change goes through a typed CLI
 verb. See [What mu is not](#what-mu-is-not).
 
-**Status:** 5.x. Upgrading from 4.x or 3.x? Read
-[How to upgrade mu](docs/guide/upgrade.md) before you install.
+**Status:** 6.x. Upgrading from 5.x (herdr retired, a breaking SDK change)
+or older? Read [How to upgrade mu](docs/guide/upgrade.md) before you install.
 
 ## Install
 

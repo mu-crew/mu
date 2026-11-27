@@ -57,6 +57,21 @@ such as `send --fresh`, fail with exit 4.
 An agent started before the pi package was installed has no control
 socket, so a send to it fails with `ctl missing`. Restart it.
 
+## Upgrade from 5.x to 6
+
+- **herdr is retired.** mu drives tmux (vtmux or vanilla) and Rex only.
+  `MU_MUX=herdr` fails with a retirement message. Rows a herdr pane left
+  (pane id `w1:p1`) are kept as a retired backend: never reaped, and verbs
+  on them refuse; drop one with `mu agent close <name> --force`.
+- **The DB's capture revision moves to 8** the first time mu 6 opens it
+  writable. mu 5.7 can still read it read-only but refuses to open it
+  writable ("Upgrade mu"), so upgrade every mu that shares the state
+  directory together, and don't run a mu 5 CLI against it afterwards.
+- **SDK breaking changes:** `herdrBackend` and the `Herdr*` errors are gone;
+  `LogRow.workstreamName` is the workstream (`LogRow.key` keeps the raw op
+  key); `RenderableOp.workstreamName` is renamed `key`. The full list is in
+  the [CHANGELOG](../../CHANGELOG.md).
+
 ## Upgrade from 4.x to 5
 
 mu 5 uses schema 14 and its own state dir, `~/.local/state/mu5`
