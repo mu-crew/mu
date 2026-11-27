@@ -331,7 +331,7 @@ export async function cmdTeardown(
     console.log("");
     console.log(
       pc.yellow(
-        `KEPT ${result.orphanedAgents.length} agent row(s): the recorded pane is still alive, could not be checked, or is a retired herdr pane: ${result.orphanedAgents.map((o) => `${o.name} (${o.paneId}${o.reason === "retired" ? ", retired herdr" : ""})`).join(", ")}`,
+        `KEPT ${result.orphanedAgents.length} agent row(s): the recorded pane is still alive, could not be checked, or is a retired herdr or another backend's pane: ${result.orphanedAgents.map((o) => `${o.name} (${o.paneId}${o.reason === "retired" ? ", retired herdr" : o.reason === "foreign" ? ", another backend" : ""})`).join(", ")}`,
       ),
     );
     for (const o of result.orphanedAgents) {
@@ -339,7 +339,9 @@ export async function cmdTeardown(
         pc.dim(
           o.reason === "retired"
             ? `  mu 6 no longer drives herdr; drop the row: mu agent close ${o.name} -w ${workstream} --force`
-            : `  once its pane is gone, preview its close: mu agent close ${o.name} -w ${workstream}`,
+            : o.reason === "foreign"
+              ? `  its pane is another backend's: close it from there (MU_MUX=<backend> mu agent close ${o.name} -w ${workstream})`
+              : `  once its pane is gone, preview its close: mu agent close ${o.name} -w ${workstream}`,
         ),
       );
     }

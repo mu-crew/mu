@@ -5,7 +5,7 @@
 // Placeholders and ids of no known shape name none (they match no shape).
 
 import { muxByName } from "./detect.js";
-import { type MuxBackendName, RetiredPaneError } from "./types.js";
+import { ForeignPaneError, type MuxBackendName, RetiredPaneError } from "./types.js";
 
 /** A backend mu no longer drives (herdr, retired in mu 6). Its rows stay foreign:
  *  no backend can list their panes, so reconcile must never read them as ghosts. */
@@ -41,4 +41,14 @@ export function foreignBackend(
 ): PaneBackendName | undefined {
   const b = paneBackend(paneId);
   return b !== undefined && b !== active ? b : undefined;
+}
+
+/**
+ * Refuse a pane `active` cannot drive: a retired backend's (`RetiredPaneError`) or another
+ * live backend's (`ForeignPaneError`). Its probe would read the pane as gone without asking.
+ */
+export function assertOwnPane(paneId: string, active: MuxBackendName): void {
+  assertDrivablePane(paneId);
+  const b = foreignBackend(paneId, active);
+  if (b !== undefined && b !== "herdr") throw new ForeignPaneError(paneId, b, active);
 }

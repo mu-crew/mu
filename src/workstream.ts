@@ -27,7 +27,7 @@ import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, tornDownAtOf } from "./db.js";
 import { sessionViews, viewPresent } from "./jobs/view.js";
 import { say } from "./messages.js";
-import { isRetiredPane } from "./mux/binding.js";
+import { foreignBackend, isRetiredPane } from "./mux/binding.js";
 import { paneRef } from "./mux/pane-ref.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
@@ -312,8 +312,13 @@ export interface TeardownResult {
   /** Rows KEPT because their recorded pane was alive (or could not be asked)
    *  after the kill: orphaned, in a torn-down workstream.
    *  `mu agent close <name> -w <ws>` removes one. */
-  /** `retired`: a retired herdr pane, never read as dead (only `mu agent close --force` drops it). */
-  orphanedAgents: { name: string; paneId: string; reason: "alive" | "unknown" | "retired" }[];
+  /** `retired`: a retired herdr pane, never read as dead (only `mu agent close --force` drops it).
+   *  `foreign`: another live backend's pane, which this one cannot ask about. */
+  orphanedAgents: {
+    name: string;
+    paneId: string;
+    reason: "alive" | "unknown" | "retired" | "foreign";
+  }[];
   /** Rows that STAY (the teardown is soft): tasks, and their notes and
    *  edges. Reported so the output says what a later `init --if` would
    *  hard-delete. */
@@ -570,7 +575,8 @@ export async function teardownWorkstream(
     // asked about by its own id; failing to ask propagates too.
     const strays: string[] = [];
     for (const a of agentsBefore) {
-      if (sessionPanes.has(a.paneId) || isRetiredPane(a.paneId)) continue;
+      // Another backend's pane (or a retired one) cannot be asked about: kept below.
+      if (sessionPanes.has(a.paneId) || foreignBackend(a.paneId, mux.name) !== undefined) continue;
       if (await viewPresent(a.paneId, mux, a.paneIdentity)) strays.push(a.name);
     }
     if (strays.length > 0) throw new WorkstreamPanesLiveError(opts.workstream, strays);
@@ -608,9 +614,13 @@ export async function teardownWorkstream(
   const dead: { name: string; paneId: string; incarnation: number }[] = [];
   const orphaned: TeardownResult["orphanedAgents"] = [];
   for (const a of agentsBefore) {
-    let reason: "alive" | "unknown" | "retired" | undefined = isRetiredPane(a.paneId)
+    let reason: TeardownResult["orphanedAgents"][number]["reason"] | undefined = isRetiredPane(
+      a.paneId,
+    )
       ? "retired"
-      : undefined;
+      : foreignBackend(a.paneId, mux.name) !== undefined
+        ? "foreign"
+        : undefined;
     try {
       if (reason === undefined && (await viewPresent(a.paneId, mux, a.paneIdentity)))
         reason = "alive";

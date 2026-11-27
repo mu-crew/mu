@@ -428,6 +428,8 @@ export const MESSAGES = {
     "MU_MUX=herdr: mu 6 no longer drives herdr; use MU_MUX=tmux or MU_MUX=rex (existing herdr rows are kept, never reaped)",
   "mux.retired_pane": (pane: string, agent?: string, ws?: string) =>
     `${agent !== undefined ? `agent ${agent}'s pane ${pane}` : `pane ${pane}`} is a retired herdr pane: mu 6 no longer drives herdr, so it can neither reach that pane nor tell whether it is alive. ${agent !== undefined && ws !== undefined ? `\`mu agent close ${agent} -w ${ws} --force\`` : "`mu agent close <name> --force`"} drops the row (close the herdr pane yourself).`,
+  "mux.foreign_pane": (pane: string, backend: string, active: string) =>
+    `pane ${pane} belongs to ${backend}, not ${active}: ${active} can neither reach it nor tell whether it is alive; run mu with MU_MUX=${backend} (from where ${backend} runs)`,
   "sync.peer_not_found": (ref: string, known: readonly string[]) =>
     `no peer matches ${JSON.stringify(ref)}${
       known.length === 0 ? " (no peers discovered)" : ` (known peers: ${known.join(", ")})`

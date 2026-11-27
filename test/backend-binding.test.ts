@@ -19,10 +19,11 @@ import {
   spawnForTask,
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
+import { agentAttachTarget, viewPresent, viewState } from "../src/jobs/view.js";
 import { foreignBackend, paneBackend } from "../src/mux/binding.js";
 import { muxByName } from "../src/mux/detect.js";
 import type { MuxBackendName } from "../src/mux/types.js";
-import { RetiredPaneError } from "../src/mux/types.js";
+import { ForeignPaneError, RetiredPaneError } from "../src/mux/types.js";
 import { reconcile } from "../src/reconcile.js";
 import { addTask, claimTask, getTask } from "../src/tasks.js";
 import { teardownWorkstream, workstreamRevision } from "../src/workstream.js";
@@ -330,5 +331,73 @@ describe("verbs on a retired herdr row", () => {
 
   it("muxByName names herdr as retired, not unknown", () => {
     expect(() => muxByName("herdr" as MuxBackendName)).toThrow(/no longer drives herdr/);
+  });
+});
+
+// A row another LIVE backend made: the active one would report it gone without asking
+// (its id fails isValidPaneId), so close and teardown must never read it as dead.
+describe("verbs on another live backend's row", () => {
+  const CASES = [
+    ["tmux", REX, "rex"],
+    ["rex", "%7", "tmux"],
+  ] as const;
+  const answering = (active: MuxBackendName) => {
+    const stdout = active === "rex" ? JSON.stringify({ sessions: [] }) : "";
+    return async () => ({ stdout, stderr: "", exitCode: 0 });
+  };
+  const owned = async (paneId: string) => {
+    const row = insertAgent(db, { name: "f", workstream: "auth", paneId });
+    addTask(db, { localId: "job", workstream: "auth", title: "Job" });
+    await claimTask(db, "job", { workstream: "auth", agentName: "f" });
+    return row;
+  };
+
+  it.each(CASES)("%s: a probe refuses, never reads it as gone", async (active, paneId, other) => {
+    mux = installMux(active, answering(active));
+    const m = muxByName(active);
+    const err = await viewPresent(paneId, m).catch((e) => e);
+    expect(err).toBeInstanceOf(ForeignPaneError);
+    expect(err.message).toContain(`belongs to ${other}, not ${active}`);
+    expect(err.message).toContain(`MU_MUX=${other}`);
+    expect((await viewState(paneId, m)).state).toBe("unknown");
+  });
+
+  it.each(CASES)(
+    "%s: close without --force refuses, keeping row and task",
+    async (active, paneId) => {
+      const row = await owned(paneId);
+      mux = installMux(active, answering(active));
+      await expect(closeAgent(db, "f", { workstream: "auth" })).rejects.toThrow(/belongs to/);
+      expect(getAgent(db, "f", "auth")).toEqual(row);
+      expect(getTask(db, "job", "auth")).toMatchObject({ status: "IN_PROGRESS" });
+    },
+  );
+
+  it.each(CASES)("%s: teardown keeps the row as foreign, never dead", async (active, paneId) => {
+    const row = await owned(paneId);
+    mux = installMux(active, answering(active));
+    const r = await teardownWorkstream(db, {
+      workstream: "auth",
+      ifRevision: workstreamRevision(db, "auth"),
+    });
+    expect(r.deletedAgents).toBe(0);
+    expect(r.orphanedAgents).toEqual([{ name: "f", paneId, reason: "foreign" }]);
+    expect(db.prepare("SELECT id FROM agents WHERE name = 'f'").all()).toEqual([
+      { id: row.incarnation },
+    ]);
+    expect(db.prepare("SELECT status FROM tasks WHERE local_id = 'job'").all()).toEqual([
+      { status: "IN_PROGRESS" },
+    ]);
+  });
+
+  it("attach to a retired herdr row names herdr's retirement, not a backend mismatch", () => {
+    const err = (() => {
+      try {
+        agentAttachTarget(muxByName("tmux"), { paneId: HERDR, tab: null, name: "h" }, "auth");
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(err).toBeInstanceOf(RetiredPaneError);
   });
 });

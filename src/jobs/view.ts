@@ -20,7 +20,7 @@
 // the mux server it was born on (`birthServer`), and is asked about only there
 // (`viewOnServer`): another server's answer is no proof.
 
-import { assertDrivablePane, foreignBackend } from "../mux/binding.js";
+import { assertOwnPane } from "../mux/binding.js";
 import { activeMux } from "../mux/detect.js";
 import {
   type ActionPaneRef,
@@ -29,14 +29,13 @@ import {
   TmuxPaneBirthError,
   type VerifiedPaneRef,
 } from "../mux/pane-ref.js";
-import {
-  type AttachTarget,
-  type CaptureOptions,
-  type MuxBackend,
-  MuxError,
-  type MuxPane,
-  type MuxPaneStatus,
-  type PaneResult,
+import type {
+  AttachTarget,
+  CaptureOptions,
+  MuxBackend,
+  MuxPane,
+  MuxPaneStatus,
+  PaneResult,
 } from "../mux/types.js";
 import { tmux } from "../tmux.js";
 
@@ -52,7 +51,7 @@ export function viewRef(
   paneId: string,
   identity: string | null | undefined,
 ): ActionPaneRef {
-  assertDrivablePane(paneId);
+  assertOwnPane(paneId, mux.name);
   return mux.name === "tmux"
     ? requireVerifiedPane(paneRef(paneId, identity))
     : { kind: "native", paneId };
@@ -68,17 +67,20 @@ export function rowRef(
   paneId: string,
   identity: string | null | undefined,
 ): ActionPaneRef {
-  assertDrivablePane(paneId);
+  assertOwnPane(paneId, mux.name);
   return mux.name === "tmux" ? paneRef(paneId, identity) : { kind: "native", paneId };
 }
 
-/** ID-only fallback for legacy liveness observations. */
+/**
+ * ID-only fallback for legacy liveness observations. Another backend's pane refuses
+ * (`ForeignPaneError`): this backend would report it gone without asking.
+ */
 function probeRef(
   mux: MuxBackend,
   paneId: string,
   identity?: string | null,
 ): string | VerifiedPaneRef {
-  assertDrivablePane(paneId);
+  assertOwnPane(paneId, mux.name);
   if (mux.name !== "tmux") return paneId;
   const ref = paneRef(paneId, identity);
   return ref.kind === "verified" ? ref : ref.paneId;
@@ -90,9 +92,8 @@ export function agentAttachTarget(
   agent: { paneId: string; paneIdentity?: string | undefined; tab: string | null; name: string },
   workstream: string,
 ): AttachTarget {
-  const backend = foreignBackend(agent.paneId, mux.name);
-  if (backend !== undefined)
-    throw new MuxError(`pane ${agent.paneId} belongs to ${backend}, not ${mux.name}`);
+  // A retired herdr row gets RetiredPaneError (its remedy), another live backend's ForeignPaneError.
+  assertOwnPane(agent.paneId, mux.name);
   const session = `mu-${workstream}`;
   if (mux.name === "tmux") {
     return { session, pane: paneRef(agent.paneId, agent.paneIdentity) };

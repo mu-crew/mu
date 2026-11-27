@@ -313,6 +313,22 @@ export class RetiredPaneError extends MuxError {
 }
 
 /**
+ * A pane another live backend made (a Rex `block:` row probed under tmux, a tmux `%N` row
+ * under Rex). The active backend can neither reach it nor tell whether it is alive, so it
+ * is never read as dead: a pane-addressed action or probe refuses with this.
+ */
+export class ForeignPaneError extends MuxError {
+  override name = "ForeignPaneError";
+  constructor(
+    public readonly paneId: string,
+    public readonly backend: MuxBackendName,
+    public readonly active: MuxBackendName,
+  ) {
+    super(say("mux.foreign_pane", paneId, backend, active));
+  }
+}
+
+/**
  * Thrown when a verb references a pane id that doesn't exist on the
  * running multiplexer. Distinct from `MuxError` (which wraps any mux
  * command failure) so callers can map it to a specific exit code
