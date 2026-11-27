@@ -1,6 +1,6 @@
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Outside a multiplexer: the caller is a plain shell (t3code, an IDE terminal, CI): TMUX, TMUX_PANE
-// and HERDR_ENV are unset and MU_MUX is blank (setup asserts it; the sandbox env is a whitelist, and
+// and REX_SESSION are unset and MU_MUX is blank (setup asserts it; the sandbox env is a whitelist, and
 // the sandbox's own MU_MUX=tmux override is blanked so mu runs the detection a plain shell runs,
 // down to the "tmux is installed" step). mu still has tmux on
 // PATH and starts its own detached server, so a worker and a delegate wave must run to completion
@@ -49,7 +49,9 @@ const scenario: Scenario = {
   check: { quietMs: 3000, maxProds: 1 },
   env: { MU_MUX: "" },
   async setup(sb) {
-    const leaked = ["TMUX", "TMUX_PANE", "HERDR_ENV"].filter((k) => sb.env[k] !== undefined);
+    const leaked = ["TMUX", "TMUX_PANE", "REX_SESSION", "REX_BLOCK"].filter(
+      (k) => sb.env[k] !== undefined,
+    );
     if (sb.env.MU_MUX) leaked.push("MU_MUX");
     if (leaked.length > 0)
       throw new Error(`outside_mux: caller env still has ${leaked.join(", ")}`);

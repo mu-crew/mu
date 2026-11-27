@@ -2,7 +2,7 @@
 // Delegates with no multiplexer installed: neither tmux nor Rex is reachable from the caller's
 // pi, its mu shim, or the delegate's pi (setup removes the sandbox's tmux shim; the sandbox PATH is
 // system dirs plus <sandbox>/bin, and setup asserts neither binary resolves there). TMUX, TMUX_PANE,
-// HERDR_ENV and MU_MUX are unset. pi, node and git stay reachable.
+// REX_SESSION and MU_MUX are unset. pi, node and git stay reachable.
 //
 // Two claims (c1 true, c2 false) need independent checks recorded on their tasks, then closes by the
 // verdict. Judged from effects only:
@@ -80,7 +80,9 @@ const scenario: Scenario = {
     rmSync(join(sb.binDir, "tmux"), { force: true });
     const left = muxOnPath(sb);
     if (left) throw new Error(`no_mux_delegate: ${left} is still on PATH`);
-    const leaked = ["TMUX", "TMUX_PANE", "HERDR_ENV"].filter((k) => sb.env[k] !== undefined);
+    const leaked = ["TMUX", "TMUX_PANE", "REX_SESSION", "REX_BLOCK"].filter(
+      (k) => sb.env[k] !== undefined,
+    );
     if (leaked.length > 0)
       throw new Error(`no_mux_delegate: caller env still has ${leaked.join(", ")}`);
   },

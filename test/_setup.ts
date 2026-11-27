@@ -45,8 +45,7 @@ for (const key of ["TMUX", "TMUX_PANE"]) delete process.env[key];
 // A test run from inside a pi session inherits its identity: `mu wait` would own
 // (and spawn would stamp) a real session's work. Tests that need one set it.
 {
-  const key = "PI_SESSION_ID";
-  delete process.env[key];
+  for (const key of ["PI_SESSION_ID", "PI_SESSION_FILE"]) delete process.env[key];
 }
 
 // A run from inside an agent (Claude Code, Codex, …) inherits its sandbox marker

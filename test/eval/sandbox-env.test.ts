@@ -39,6 +39,23 @@ const BASE: NodeJS.ProcessEnv = {
   HOME: "/home/real",
 };
 
+describe("sandboxEnv live", () => {
+  it("drops Rex identity (REX_*, TERM_PROGRAM=rex) but keeps another TERM_PROGRAM", () => {
+    const rex = { ...BASE, REX_SESSION: "s", REX_BLOCK: "b", REX_SERVER: "x", TERM_PROGRAM: "rex" };
+    const a = sandboxEnv("/tmp/d", surface, "sock", rex, { live: true });
+    for (const k of ["REX_SESSION", "REX_BLOCK", "REX_SERVER", "TERM_PROGRAM"])
+      expect(a[k]).toBeUndefined();
+    const b = sandboxEnv(
+      "/tmp/d",
+      surface,
+      "sock",
+      { ...BASE, TERM_PROGRAM: "iTerm.app" },
+      { live: true },
+    );
+    expect(b.TERM_PROGRAM).toBe("iTerm.app");
+  });
+});
+
 describe("sandboxEnv", () => {
   const dir = "/tmp/mu-eval-1-2-abc";
   const env = sandboxEnv(dir, surface, "mu-eval-1-2-abc", BASE);

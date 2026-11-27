@@ -114,6 +114,8 @@ describe("op stamping", () => {
       });
       const rows = listLogs(db, {});
       expect(rows.find((r) => r.key === "w")?.actorSession).toBeNull();
+      expect(rows.find((r) => r.key === "w")?.actorAnchor).toBeNull();
+      expect(process.env.PI_SESSION_FILE).toBeUndefined(); // test/_setup.ts scrubs it
       expect(rows.find((r) => r.key === "w/t")?.actorSession).toBe("pi:explicit");
     } finally {
       db.close();

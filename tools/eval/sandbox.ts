@@ -158,13 +158,13 @@ function linkTools(binDir: string, pathEnv: string | undefined): void {
 }
 
 /**
- * What a live sandbox drops from the caller's environment: mu's, tmux's, herdr's, murmur's and
+ * What a live sandbox drops from the caller's environment: mu's, tmux's, herdr's, Rex's (REX_*, TERM_PROGRAM=rex), murmur's and
  * pi's own variables, and each harness's session and nesting markers (the caller may itself be an
  * agent), named one by one. A harness's configuration and auth variables (CLAUDE_CODE_USE_*,
  * CLAUDE_CODE_OAUTH_TOKEN, CODEX_HOME, ANTHROPIC_*, ...) stay.
  */
 export const LIVE_DROP = new RegExp(
-  `^(MU_|TMUX|HERDR_|MURMUR_|PI_|EVAL_|(${[
+  `^(MU_|TMUX|HERDR_|REX_|MURMUR_|PI_|EVAL_|(${[
     "CLAUDECODE",
     "CLAUDE_PID",
     "CLAUDE_CODE_ENTRYPOINT",
@@ -216,6 +216,7 @@ export function sandboxEnv(
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) {
     if (v === undefined) continue;
+    if (opts.live && k === "TERM_PROGRAM" && v === "rex") continue;
     if (opts.live ? !LIVE_DROP.test(k) : KEEP.has(k)) env[k] = v;
   }
   Object.assign(env, launcherEnv(base));
