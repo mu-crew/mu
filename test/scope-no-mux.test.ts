@@ -27,8 +27,8 @@ import { runCli, runCliJson, runCliWire } from "./_runCli.js";
 const ENV_KEYS = [
   "TMUX",
   "TMUX_PANE",
-  "HERDR_ENV",
-  "HERDR_WORKSPACE_ID",
+  "REX_SESSION",
+  "REX_BLOCK",
   "MU_SESSION",
   "MU_MANAGED_AGENT",
   "MU_AGENT_NAME",

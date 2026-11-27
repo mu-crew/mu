@@ -76,7 +76,8 @@ describe("bare mu", () => {
       MURMUR_STATE_DIR: join(tmp, "murmur"),
       TERM: "xterm-256color",
     };
-    for (const k of ["TMUX", "TMUX_PANE", "HERDR_ENV", "MU_WORKSTREAM"]) delete env[k];
+    for (const k of ["TMUX", "TMUX_PANE", "REX_SESSION", "REX_BLOCK", "MU_WORKSTREAM"])
+      delete env[k];
   });
   afterEach(() => rmFixtureDir(tmp));
 

@@ -51,7 +51,8 @@ const CLI_ENTRIES: [string, (bad: string) => string[], Record<string, string>?][
 const ENV_KEYS = [
   "TMUX",
   "TMUX_PANE",
-  "HERDR_ENV",
+  "REX_SESSION",
+  "REX_BLOCK",
   "MU_SESSION",
   "MU_MANAGED_AGENT",
   "MU_AGENT_NAME",

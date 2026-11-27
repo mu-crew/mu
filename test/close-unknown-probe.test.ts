@@ -97,7 +97,7 @@ const kept = (): void => {
 const noMux = (fn: () => Promise<void>): Promise<void> =>
   withEnv("TMUX", undefined, () =>
     withEnv("TMUX_PANE", undefined, () =>
-      withEnv("HERDR_ENV", undefined, () =>
+      withEnv("REX_SESSION", undefined, () =>
         withEnv("MU_MUX", undefined, async () => {
           mux?.restore();
           mux = undefined;

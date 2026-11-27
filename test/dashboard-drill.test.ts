@@ -932,7 +932,7 @@ describe("attach", () => {
   it("no multiplexer at all: scrollback opens with the reason, nothing runs", async () => {
     await withEnv("TMUX", undefined, () =>
       withEnv("TMUX_PANE", undefined, () =>
-        withEnv("HERDR_ENV", undefined, () =>
+        withEnv("REX_SESSION", undefined, () =>
           withEnv("MU_MUX", undefined, async () => {
             const none = installNoMux();
             try {

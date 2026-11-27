@@ -39,7 +39,8 @@ const KEYS = [
   "PATH",
   "TMUX",
   "TMUX_PANE",
-  "HERDR_ENV",
+  "REX_SESSION",
+  "REX_BLOCK",
   "MU_MUX",
   "MU_PI_COMMAND",
   "MU_STATE_DIR",
@@ -74,7 +75,8 @@ beforeEach(() => {
   }
   symlinkSync(process.execPath, join(bin, "node"));
   process.env.PATH = bin;
-  for (const k of ["TMUX", "TMUX_PANE", "HERDR_ENV", "MU_MUX", "FAKE_PI"]) delete process.env[k];
+  for (const k of ["TMUX", "TMUX_PANE", "REX_SESSION", "REX_BLOCK", "MU_MUX", "FAKE_PI"])
+    delete process.env[k];
   process.env.MU_PI_COMMAND = `${process.execPath} ${FAKE}`;
   process.env.MU_STATE_DIR = dir;
   log = join(dir, "requests.log");
