@@ -103,6 +103,8 @@ describe.skipIf(!available)("placement spawn through a real Rex shell rc", () =>
       MU_MUX: "tmux",
       MU_REX_SERVER: `unix://${join(dir, "wrong-rex.sock")}`,
       PI_CODING_AGENT_SESSION_DIR: join(dir, "wrong-pi-sessions"),
+      MU_ACTOR_SESSION: "pi:wrong-session",
+      MU_ACTOR_ANCHOR: "wrong-anchor",
     };
     const credentials = { SSH_AUTH_SOCK: join(dir, "login.sock"), LOGIN_MARKER: "from-rc" };
     writeFileSync(
@@ -215,6 +217,8 @@ describe.skipIf(!available)("placement spawn through a real Rex shell rc", () =>
         MU_AGENT_NAME: name,
         MU_MANAGED_AGENT: "1",
         MU_AGENT_CLI: "pi",
+        MU_ACTOR_SESSION: "",
+        MU_ACTOR_ANCHOR: "",
         MU_HOST: "",
         MU_AGENT: "",
         MU_REMOTE: "",

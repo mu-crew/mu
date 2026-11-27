@@ -479,7 +479,7 @@ describe("spawn control socket", () => {
     expect(agent.ctl).toBe("skipped");
   });
 
-  it("injects exactly the seven identity keys and pi's pinned channel, with no MU_* var set in the caller", async () => {
+  it("injects exactly the seven identity keys, pi's pinned channel and blank provenance, with no MU_* var set in the caller", async () => {
     process.env.MU_SPAWN_CTL_MS = "0";
     // The caller has no MU_* var of its own: the injected values come from mu, not from inheritance.
     const stripped = Object.entries(process.env).filter(
@@ -497,6 +497,8 @@ describe("spawn control socket", () => {
         ),
       );
       expect(Object.keys(env).sort()).toEqual([
+        "MU_ACTOR_ANCHOR",
+        "MU_ACTOR_SESSION",
         "MU_AGENT_CLI",
         "MU_AGENT_NAME",
         "MU_CTL_SOCK",
@@ -509,6 +511,9 @@ describe("spawn control socket", () => {
       expect(env).toMatchObject({
         // Pinned empty, so the pane never inherits `hooks` from the tmux server (spec D15).
         MU_PI_CHANNEL: "",
+        // Pinned empty: provenance is the worker's own session, never the tmux server's.
+        MU_ACTOR_SESSION: "",
+        MU_ACTOR_ANCHOR: "",
         MU_MANAGED_AGENT: "1",
         MU_AGENT_NAME: "worker-1",
         MU_AGENT_CLI: "pi",

@@ -691,6 +691,11 @@ async function spawnPreparedAgent(
           ...(opts.orchestrator === true ? { MU_ORCHESTRATOR: "1" } : {}),
           // tmux may inherit a caller's markers. This pane is a worker on the DB's machine.
           ...(muleProfile !== undefined ? { MU_REMOTE: "", MU_ORCHESTRATOR: "" } : {}),
+          // Provenance is the worker's own: its pi's bash tool sets PI_SESSION_ID,
+          // its extension MU_ACTOR_*. One inherited from tmux's server or rc
+          // would win and credit the spawner's session.
+          MU_ACTOR_SESSION: "",
+          MU_ACTOR_ANCHOR: "",
           [CTL_SOCK_ENV]: ctlSocket,
           MU_DB_PATH: resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath()),
           MU_STATE_DIR: resolve(defaultStateDir()),

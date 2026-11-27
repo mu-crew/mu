@@ -212,6 +212,33 @@ describe("rex spawnAgent", () => {
     });
   });
 
+  it("pins the worker's identity and blanks inherited provenance after rc", async () => {
+    mux = installMux("rex", [
+      ["api call session.list", SESSIONS],
+      ["api call session.view", VIEW(["agents", "_mu"])],
+      ["api call session.new_split", json({ block_ids: [BID2] })],
+    ]);
+    const env = {
+      MU_MANAGED_AGENT: "1",
+      MU_AGENT_NAME: "alice",
+      MU_WORKSTREAM: "auth",
+      MU_ACTOR_SESSION: "",
+      MU_ACTOR_ANCHOR: "",
+    };
+    await withEnv("SHELL", "/bin/zsh", async () => {
+      await spawnAgent({ ...opts, env });
+    });
+    const layout = apiInput(mux, "session.new_split").layout as {
+      block: { options: { command: string[] } };
+    };
+    expect(layout.block.options.command).toEqual([
+      "env",
+      "/bin/zsh",
+      "-ic",
+      "export MU_MANAGED_AGENT='1' MU_AGENT_NAME='alice' MU_WORKSTREAM='auth' MU_ACTOR_SESSION='' MU_ACTOR_ANCHOR='' || exit\npi --model x",
+    ]);
+  });
+
   it("splits an existing window, and arms retention at creation", async () => {
     mux = installMux("rex", [
       ["api call session.list", SESSIONS],

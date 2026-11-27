@@ -48,6 +48,7 @@ import {
 } from "./delegate.js";
 import { claimPaneRole, clearPaneRole } from "./delegate-osc.js";
 import { claimPendingPaneOption } from "./delegate-pane-option.js";
+import { type ActorSessionManager, withActor } from "./mu-run.js";
 import {
   type MuNudgeApi,
   parallelSettle,
@@ -442,7 +443,15 @@ function reasonOf(event: unknown): string | undefined {
   return typeof r === "string" ? r : undefined;
 }
 
-export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void {
+export default function muPi(pi: MuPiApi, base: MuRunner = defaultRunner()): void {
+  // Every mu this extension runs records this session as its actor (ops'
+  // actor_session / actor_anchor). Registered first: other session_start
+  // handlers already run mu.
+  let session: ActorSessionManager | undefined;
+  pi.on("session_start", (_e, c) => {
+    session = c?.sessionManager;
+  });
+  const run = withActor(base, () => session);
   const delegates = registerDelegate(pi, run);
   // Identity follows the bind: a pi that finds MU_CTL_SOCK served by
   // another pi is nested and gets none of the agent's nudges.

@@ -53,6 +53,9 @@ export const LOCAL_ONLY_ENV = [
   "MU_REMOTE_KEY",
   "MU_REMOTE",
   "MU_PI_CHANNEL",
+  // Provenance names the session that ran the verb: the remote worker's own.
+  "MU_ACTOR_SESSION",
+  "MU_ACTOR_ANCHOR",
   "PI_CODING_AGENT_SESSION_DIR",
 ] as const;
 

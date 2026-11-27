@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { helperPath } from "../src/helper-path.js";
+import { resolveProvenance } from "../src/provenance.js";
 
 export type MuResult = { code: number; stdout: string; stderr: string };
 /** Per-call options. `env` is merged over this process's env for that child only
@@ -44,6 +45,47 @@ export function cliInterpreter(
   execPath: string = process.execPath,
 ): string {
   return bunVersion === undefined ? execPath : "node";
+}
+
+/** The running pi session, as its ctx's sessionManager exposes it. */
+export type ActorSessionManager = {
+  getSessionId?: () => string;
+  getSessionFile?: () => string | undefined;
+};
+
+/**
+ * The provenance env of a mu child run on behalf of this pi session:
+ * `MU_ACTOR_SESSION` (`pi:<id>`) and `MU_ACTOR_ANCHOR` (the latest assistant
+ * entry of the session file, read now), both empty when unknown. pi exports
+ * `PI_SESSION_ID` only to its bash tool, so without this a mu the extension
+ * runs records no session. Set as `MU_ACTOR_*`, never `PI_SESSION_ID`: that one
+ * also names the caller of delegate calls and waits. Empty, not absent, so an
+ * inherited stale value never wins (provenance reads `||`).
+ */
+export function actorEnv(sm: ActorSessionManager | undefined): Record<string, string> {
+  let id: string | undefined;
+  let file: string | undefined;
+  try {
+    id = sm?.getSessionId?.() || undefined;
+    file = sm?.getSessionFile?.() || undefined;
+  } catch {
+    // a stale ctx throws after session replacement
+  }
+  const prov = resolveProvenance({
+    ...(id ? { PI_SESSION_ID: id } : {}),
+    ...(file ? { PI_SESSION_FILE: file } : {}),
+  });
+  return { MU_ACTOR_SESSION: prov.actorSession ?? "", MU_ACTOR_ANCHOR: prov.actorAnchor ?? "" };
+}
+
+/** `run` with the current pi session's provenance env under each call's own
+ *  `opts.env` (an explicit key wins). No session yet: `run` unchanged. */
+export function withActor(run: MuRunner, session: () => ActorSessionManager | undefined): MuRunner {
+  return (args, signal, stdin, opts) => {
+    const sm = session();
+    if (sm === undefined) return run(args, signal, stdin, opts);
+    return run(args, signal, stdin, { ...opts, env: { ...actorEnv(sm), ...opts?.env } });
+  };
 }
 
 /** The CLI this extension ships with (dist/cli.js next to dist/extension/), else `mu` on PATH. */

@@ -124,16 +124,24 @@ describe("mu orchestrate", () => {
 
     // What the orchestrator starts, from inside its pane: a worker spawn builds the pane env
     // afresh, and a mux-free delegate's child pi has the flag removed.
-    await asEnv(orch, async () => {
+    // The orchestrator's extension runs mu with its session as MU_ACTOR_*.
+    const actor = { MU_ACTOR_SESSION: "pi:orch", MU_ACTOR_ANCHOR: "e1" };
+    await asEnv({ ...orch, ...actor }, async () => {
       await spawnAgent(db, { name: "worker-1", workstream: "auth" });
     });
     const worker = paneEnv("worker-1");
     expect(worker.MU_ORCHESTRATOR).toBeUndefined();
     expect(worker.MU_MANAGED_AGENT).toBe("1");
+    expect(worker).toMatchObject({ MU_ACTOR_SESSION: "", MU_ACTOR_ANCHOR: "" });
     expect(delegateEnabled(worker)).toBe(false);
     expect(getAgent(db, "worker-1", "auth")?.spawner).toBe("auth/orchestrator-1");
-    const child = delegateChildEnv(orch, { MU_MANAGED_AGENT: "1", MU_AGENT_NAME: "d1" });
+    const child = delegateChildEnv(
+      { ...orch, ...actor },
+      { MU_MANAGED_AGENT: "1", MU_AGENT_NAME: "d1" },
+    );
     expect(child.MU_ORCHESTRATOR).toBeUndefined();
+    expect(child.MU_ACTOR_SESSION).toBeUndefined();
+    expect(child.MU_ACTOR_ANCHOR).toBeUndefined();
     expect(delegateEnabled(child)).toBe(false);
     // A remote pane unsets it too.
     expect(LOCAL_ONLY_ENV).toContain("MU_ORCHESTRATOR");

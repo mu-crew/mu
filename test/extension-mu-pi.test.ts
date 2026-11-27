@@ -113,6 +113,24 @@ describe("mu pi extension", () => {
     );
   });
 
+  it("every mu it runs carries the session as MU_ACTOR_*, once a session started", async () => {
+    const key = "MU_CTL_SOCK";
+    delete process.env[key];
+    const other = fakePi();
+    const calls: { args: readonly string[]; env?: Record<string, string | undefined> }[] = [];
+    const run: MuRunner = async (args, _s, _i, opts) => {
+      calls.push({ args, ...(opts?.env ? { env: opts.env } : {}) });
+      return { code: 0, stdout: JSON.stringify({ ok: true, data: { items: [] } }), stderr: "" };
+    };
+    muPi(other.pi, run);
+    const sm = { getSessionId: () => "s-7", getSessionFile: () => undefined };
+    Object.assign(other.ctx, { sessionManager: sm });
+    await other.emit("session_start");
+    await other.emit("agent_before_settle", { outcome: "completed" });
+    const owned = calls.find((c) => c.args[0] === "task" && c.args[1] === "owned-by");
+    expect(owned?.env).toMatchObject({ MU_ACTOR_SESSION: "pi:s-7", MU_ACTOR_ANCHOR: "" });
+  });
+
   it("serves hello and status after session_start, socket mode 0600", async () => {
     await fake.emit("session_start");
     const hello = await ctlRequest(sock, { op: "hello" });

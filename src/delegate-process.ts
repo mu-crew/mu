@@ -140,15 +140,16 @@ export function delegateProcessPaths(
 /**
  * The child pi's env: the caller's, with the delegate's identity on top and
  * without `MU_ORCHESTRATOR`. An orchestrator's `mu delegates run` inherits that
- * flag, and a delegate that kept it would see `mu_delegate` (spec D9).
+ * flag, and a delegate that kept it would see `mu_delegate` (spec D9). Nor the
+ * caller's `MU_ACTOR_SESSION` / `MU_ACTOR_ANCHOR` (set by the extension that
+ * ran it): they would credit the delegate's own ops to the caller's session.
  */
 export function delegateChildEnv(
   parent: NodeJS.ProcessEnv,
   identity: Record<string, string>,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...parent, ...identity };
-  const key = "MU_ORCHESTRATOR";
-  delete env[key];
+  for (const key of ["MU_ORCHESTRATOR", "MU_ACTOR_SESSION", "MU_ACTOR_ANCHOR"]) delete env[key];
   return env;
 }
 
