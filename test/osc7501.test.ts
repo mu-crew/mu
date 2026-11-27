@@ -3,11 +3,13 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  claimDelegatesStatus,
   claimPaneRole,
   clearPaneRole,
   delegatesOsc,
   emitDelegatesStatus,
   paneRole,
+  resetDelegatesStatusForTests,
   resetPaneRoleForTests,
   roleOsc,
   setTtyWriterForTests,
@@ -305,11 +307,36 @@ describe("delegates waiting record", () => {
     expect(delegatesOsc(0)).toBe("\x1b]7501;state=clear:id=mu/delegates\x1b\\");
   });
 
+  afterEach(() => resetDelegatesStatusForTests());
+
   it("goes to the tty writer, never stdout", () => {
     const seen: string[] = [];
     setTtyWriterForTests((d) => seen.push(d));
+    claimDelegatesStatus(true);
     emitDelegatesStatus(1);
-    expect(seen).toEqual([delegatesOsc(1)]);
+    expect(seen).toEqual([delegatesOsc(0), delegatesOsc(1)]);
+  });
+
+  it("a pi that does not own its pane (nested, headless) never writes it", () => {
+    const seen: string[] = [];
+    setTtyWriterForTests((d) => seen.push(d));
+    claimDelegatesStatus(false);
+    emitDelegatesStatus(1);
+    emitDelegatesStatus(0);
+    expect(seen).toEqual([]);
+  });
+
+  it("held until the pane is claimed; the owner's claim clears a stale record at 0", () => {
+    const seen: string[] = [];
+    setTtyWriterForTests((d) => seen.push(d));
+    emitDelegatesStatus(2);
+    expect(seen).toEqual([]);
+    claimDelegatesStatus(true);
+    expect(seen).toEqual([delegatesOsc(2)]);
+    resetDelegatesStatusForTests();
+    seen.splice(0);
+    claimDelegatesStatus(true);
+    expect(seen).toEqual([delegatesOsc(0)]);
   });
 });
 

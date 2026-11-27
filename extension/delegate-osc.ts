@@ -81,9 +81,32 @@ export function setTtyWriterForTests(w: TtyWriter | null): void {
   writer = w ?? writeToTty;
 }
 
-/** Report `count` delegates in flight to the pane's terminal. */
+/** Whether this pi owns its pane's `mu/delegates` record; undefined: not decided yet. */
+let delegatesOwner: boolean | undefined;
+/** The latest count reported, written once the pane is claimed. */
+let delegatesCount = 0;
+
+/**
+ * Session start: only the pane's own pi (`owner`, the same decision as
+ * `@mu_pending` and `mu/role`) writes `mu/delegates`; a nested or headless pi
+ * shares a pane it does not own. The owner writes its count at once, so a 0
+ * clears a record a crashed predecessor left behind.
+ */
+export function claimDelegatesStatus(owner: boolean): void {
+  delegatesOwner = owner;
+  if (owner) writer(delegatesOsc(delegatesCount));
+}
+
+/** Report `count` delegates in flight to the pane's terminal, once this pi owns the pane. */
 export function emitDelegatesStatus(count: number): void {
-  writer(delegatesOsc(count));
+  delegatesCount = count;
+  if (delegatesOwner === true) writer(delegatesOsc(count));
+}
+
+/** Forget the pane claim and count (tests). */
+export function resetDelegatesStatusForTests(): void {
+  delegatesOwner = undefined;
+  delegatesCount = 0;
 }
 
 // OSC 7501 "role" sub-record, Rex only: tmux carries the crew role as the

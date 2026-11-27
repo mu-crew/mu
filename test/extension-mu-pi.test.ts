@@ -14,7 +14,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MuRunner } from "../extension/delegate.js";
-import { resetPaneRoleForTests, roleOsc, setTtyWriterForTests } from "../extension/delegate-osc.js";
+import {
+  delegatesOsc,
+  emitDelegatesStatus,
+  resetDelegatesStatusForTests,
+  resetPaneRoleForTests,
+  roleOsc,
+  setTtyWriterForTests,
+} from "../extension/delegate-osc.js";
 import {
   clearPendingPaneOption,
   reportPendingPaneOption,
@@ -898,17 +905,22 @@ describe("mu pi extension", () => {
       try {
         setTtyWriterForTests((d) => written.push(d));
         await fake.emit("session_start");
-        expect(written).toEqual([roleOsc("orchestrator")]);
+        // The owner also clears a crashed predecessor's mu/delegates record.
+        expect(written).toEqual([roleOsc("orchestrator"), delegatesOsc(0)]);
         // A nested pi in the same pane (its own process: fresh module state).
         resetPaneRoleForTests();
+        resetDelegatesStatusForTests();
         written.splice(0);
         const nested = otherPi();
         await nested.emit("session_start");
+        emitDelegatesStatus(1); // its own delegate: never the parent's record
+        emitDelegatesStatus(0);
         await nested.emit("session_shutdown", { reason: "quit" });
         expect(written).toEqual([]);
       } finally {
         setTtyWriterForTests(() => {});
         resetPaneRoleForTests();
+        resetDelegatesStatusForTests();
         for (const key of keys) delete process.env[key];
       }
     });

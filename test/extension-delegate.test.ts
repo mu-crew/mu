@@ -9,7 +9,13 @@ import {
   PENDING_CHANNEL,
   registerDelegate,
 } from "../extension/delegate.js";
-import { delegatesOsc, setTtyWriterForTests, writeAll } from "../extension/delegate-osc.js";
+import {
+  claimDelegatesStatus,
+  delegatesOsc,
+  resetDelegatesStatusForTests,
+  setTtyWriterForTests,
+  writeAll,
+} from "../extension/delegate-osc.js";
 import muPi from "../extension/mu-pi.js";
 import { listDelegates } from "../src/delegates.js";
 import {
@@ -36,6 +42,8 @@ describe("OSC 7501 waiting record", () => {
   it("writes working while delegates are pending and clear when none are, to the tty only", async () => {
     const seen: string[] = [];
     setTtyWriterForTests((d) => seen.push(d));
+    claimDelegatesStatus(true); // the pane's own pi (mu-pi's session_start)
+    seen.splice(0);
     try {
       const mu = fakeMu();
       const p = fakePi();
@@ -47,6 +55,7 @@ describe("OSC 7501 waiting record", () => {
       expect(seen).toEqual([delegatesOsc(1), delegatesOsc(0)]);
     } finally {
       setTtyWriterForTests(() => {});
+      resetDelegatesStatusForTests();
     }
   });
 });

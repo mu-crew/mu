@@ -42,11 +42,12 @@ import {
 import {
   type DelegateCtx,
   defaultRunner,
+  delegateEnabled,
   type MuDelegateApi,
   type MuRunner,
   registerDelegate,
 } from "./delegate.js";
-import { claimPaneRole, clearPaneRole } from "./delegate-osc.js";
+import { claimDelegatesStatus, claimPaneRole, clearPaneRole } from "./delegate-osc.js";
 import { claimPendingPaneOption } from "./delegate-pane-option.js";
 import { type ActorSessionManager, withActor } from "./mu-run.js";
 import {
@@ -482,10 +483,12 @@ function headless(c: { hasUI?: boolean; mode?: string } | undefined): boolean {
   return c?.hasUI === false || (c?.mode !== undefined && c.mode !== "tui");
 }
 
-/** The pane's own pi claims its tmux `@mu_pending` and reports its Rex `mu/role`. */
+/** The pane's own pi claims its tmux `@mu_pending`, its `mu/delegates` record, and reports its Rex `mu/role`. */
 function claimPane(owner: boolean): void {
   void claimPendingPaneOption(owner);
   claimPaneRole(owner);
+  // No delegates here (a managed worker, MU_DELEGATE=0): no record to write or clear.
+  claimDelegatesStatus(owner && delegateEnabled());
 }
 
 /**
