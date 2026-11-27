@@ -47,6 +47,7 @@ import {
   wakeText,
 } from "./delegate-format.js";
 import { emitDelegatesStatus } from "./delegate-osc.js";
+import { clearPendingPaneOption, reportPendingPaneOption } from "./delegate-pane-option.js";
 import { type ProcessRun, processFailedText, processStarted } from "./delegate-process-format.js";
 import { delegateTraceOn, TRACE_EVENTS, trace, traceFields } from "./delegate-trace.js";
 import {
@@ -303,6 +304,8 @@ export function registerDelegate(
     if (count === lastPending) return;
     lastPending = count;
     emitDelegatesStatus(count);
+    // tmux: the count as `@mu_pending` on this pane; shutdown unsets it once.
+    if (!closed) void reportPendingPaneOption(count);
     try {
       pi.events.emit(PENDING_CHANNEL, { source: DELEGATE_TOOL, count });
     } catch {
@@ -1575,6 +1578,8 @@ export function registerDelegate(
   // are also in the tool results, and `mu agent wait` recovers them.
   pi.on("session_shutdown", async (e, ctx) => {
     closed = true;
+    // Unset `@mu_pending` (bounded; never rejects) while the rest winds down.
+    const unsetPending = clearPendingPaneOption();
     clearImmediate(settleCheck);
     clearImmediate(wakeSoon);
     trace("session_shutdown.state", {
@@ -1585,7 +1590,7 @@ export function registerDelegate(
     // Wakes die with this runtime; the recorded answers stay owed to the next wait.
     arriving.clear();
     owed.clear();
-    if (inflight.size === 0 && queue.length === 0) return;
+    if (inflight.size === 0 && queue.length === 0) return unsetPending;
     const shown = (key: string) => (key.startsWith(`${W}/`) ? key.slice(W.length + 1) : key);
     const names = [...inflight].flatMap(([k, e]) => (e.process ? [] : [shown(k)]));
     const procs = [...inflight].flatMap(([k, e]) => (e.process ? [shown(k)] : []));
@@ -1649,6 +1654,7 @@ export function registerDelegate(
     const msg = parts.join(" ");
     if (ctx?.hasUI && ctx.ui) ctx.ui.notify(msg, "warning");
     else process.stderr.write(`mu: ${msg}\n`);
+    await unsetPending;
   });
 
   return {

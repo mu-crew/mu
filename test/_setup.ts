@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { inject } from "vitest";
 import { setTtyWriterForTests } from "../extension/delegate-osc.js";
+import { setPaneOptionRunnerForTests } from "../extension/delegate-pane-option.js";
 import { setLocalLaunchFlagsForTests } from "../src/agents/spawn-presets.js";
 import {
   setMurmurHookRunnerForTests,
@@ -75,6 +76,8 @@ process.env.MU_MUX = "tmux";
 setMuzzleRunnerForTests(async () => null);
 // Delegate OSC 7501 records must not reach the developer's terminal.
 setTtyWriterForTests(() => {});
+// ...nor `@mu_pending` a real tmux pane: the fast tier spawns no tmux.
+setPaneOptionRunnerForTests(async () => {});
 
 // Baseline: no local launcher takes a launch flag (codex's `--no-daemon`), so no
 // test runs the machine's own `codex --help`. test/spawn-presets.test.ts probes
