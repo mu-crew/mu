@@ -61,6 +61,7 @@ import {
   assertReleasable,
   awaitExit,
   awaitHelpers,
+  closePayload,
   getWorktreeAt,
   getWorktreeFor,
   type PaneProcesses,
@@ -734,7 +735,7 @@ async function closeLocked(
     db,
     agent.workstreamName,
     "agent.close",
-    closeLine(name, agent.paneId, worktree, closes),
+    closePayload(closeLine(name, agent.paneId, worktree, closes), name, worktree?.landing),
     await resolveActorIdentity(),
   );
   return {
@@ -797,7 +798,7 @@ async function closeTreeWithoutRow(
     db,
     opts.workstream,
     "agent.close",
-    closeLine(name, undefined, worktree),
+    closePayload(closeLine(name, undefined, worktree), name, worktree.landing),
     await resolveActorIdentity(),
   );
   return { result: { ...nothing, worktree } };

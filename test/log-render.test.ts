@@ -24,6 +24,7 @@ import {
   renderOp,
   renderOpLine,
 } from "../src/log-render.js";
+import { closePayload, readCloseLanding } from "../src/worktree.js";
 
 /** Minimal op row. Defaults are a task op so cases stay terse. */
 function op(over: Partial<RenderableOp> = {}): RenderableOp {
@@ -334,5 +335,33 @@ describe("opSubject resolves the show-command target from structure", () => {
 
   it("intentless prose has no subject", () => {
     expect(opSubject(op({ intent: null, payload: "just a note" }))).toBeNull();
+  });
+});
+
+describe("agent.close with a landing (fsj U2)", () => {
+  const landing = {
+    repoRoot: "/r",
+    targetRef: "refs/heads/main",
+    baseSha: "a".repeat(40),
+    headSha: "b".repeat(40),
+    preservedRef: "mu/demo/w1-bbbbbbbbbbbb",
+  };
+  const close = (payload: string) =>
+    op({ intent: "agent.close", kind: "agent", key: "demo", payload });
+
+  it("renders the prose in `text`, never the JSON, and the landing reads back", () => {
+    const row = close(
+      closePayload("agent close w1 (pane=%1, worktree kept-branch)", "w1", landing),
+    );
+    expect(renderOpLine(row)).toBe("agent close w1 (pane=%1, worktree kept-branch)");
+    expect(readCloseLanding(row)).toEqual(landing);
+  });
+
+  it("a close with no local tree, or a prose payload from before, has no landing", () => {
+    expect(
+      readCloseLanding(close(closePayload("agent close p1 (pane=%2)", "p1", undefined))),
+    ).toBeNull();
+    expect(readCloseLanding(close("agent close p1 (pane=%2)"))).toBeNull();
+    expect(readCloseLanding(op({ payload: closePayload("x", "x", landing) }))).toBeNull();
   });
 });

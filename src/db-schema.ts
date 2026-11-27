@@ -96,6 +96,9 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   // The tmux server a local pane was spawned on, `<server pid>|<start time>`: tmux pane ids restart per
   // server, so a pane counts as the agent's only on that server. NULL: a row older than the column.
   ["agents", "pane_identity", "TEXT"],
+  // The ref a local worktree was cut from (`--from`, else the root's branch at spawn): the landing
+  // target its agent.close op records (src/worktree.ts). NULL: detached root, or a row older than it.
+  ["worktrees", "target_ref", "TEXT"],
   // A lease reservation's remote worktree (src/carrier-jobs.ts): which tree it belongs to.
   ["carrier_jobs", "tree_path", "TEXT"],
   ["carrier_jobs", "tree_agent_id", "INTEGER"],
@@ -1005,7 +1008,8 @@ CREATE TABLE IF NOT EXISTS worktrees (
   root                TEXT NOT NULL,            -- the repo checkout the worktree was added from
   base                TEXT NOT NULL,            -- commit the worktree was created at
   last_collected_head TEXT,                     -- HEAD last brought back (remote collect)
-  created_at          TEXT NOT NULL
+  created_at          TEXT NOT NULL,
+  target_ref          TEXT                      -- ref it was cut from (--from, else root's branch); also in ADDED_COLUMNS
 );
 
 CREATE INDEX IF NOT EXISTS idx_worktrees_workstream ON worktrees (workstream, agent);

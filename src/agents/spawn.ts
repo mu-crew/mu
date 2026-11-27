@@ -1238,6 +1238,11 @@ async function prestageLocked(
   // the checkout it works in, not in the main one. Objects and refs are
   // shared, so the pinned sha is valid from `root`.
   const from = await git(["rev-parse", "--verify", `${opts.from ?? "HEAD"}^{commit}`], top);
+  // The landing target an agent.close records: the full ref `--from` (else HEAD) names, or null
+  // for a sha or a detached HEAD.
+  const targetRef =
+    (await git(["rev-parse", "--symbolic-full-name", opts.from ?? "HEAD"], top).catch(() => "")) ||
+    null;
   const placeholder = insertAgent(db, {
     name: opts.name,
     workstream: opts.workstream,
@@ -1274,6 +1279,7 @@ async function prestageLocked(
       root,
       base,
       createdAt,
+      targetRef,
     });
     return { path, base, root, createdAt, incarnation: placeholder.incarnation };
   } catch (err) {

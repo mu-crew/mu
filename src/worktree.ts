@@ -207,6 +207,8 @@ export interface WorktreeRow {
   /** HEAD last brought back by a collect; reuse and removal accept it like `base`. */
   lastCollectedHead: string | null;
   createdAt: string;
+  /** The ref it was cut from (`--from`, else the root's branch at spawn); null: detached or unknown. */
+  targetRef?: string | null;
 }
 
 interface RawWorktreeRow {
@@ -217,6 +219,7 @@ interface RawWorktreeRow {
   base: string;
   last_collected_head: string | null;
   created_at: string;
+  target_ref?: string | null;
 }
 
 function fromRaw(r: RawWorktreeRow): WorktreeRow {
@@ -228,14 +231,23 @@ function fromRaw(r: RawWorktreeRow): WorktreeRow {
     base: r.base,
     lastCollectedHead: r.last_collected_head,
     createdAt: r.created_at,
+    targetRef: r.target_ref ?? null,
   };
 }
 
 export function registerWorktree(db: Db, row: Omit<WorktreeRow, "lastCollectedHead">): void {
   db.prepare(
-    `INSERT OR REPLACE INTO worktrees (path, agent, workstream, root, base, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(row.path, row.agent, row.workstream, row.root, row.base, row.createdAt);
+    `INSERT OR REPLACE INTO worktrees (path, agent, workstream, root, base, created_at, target_ref)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    row.path,
+    row.agent,
+    row.workstream,
+    row.root,
+    row.base,
+    row.createdAt,
+    row.targetRef ?? null,
+  );
 }
 
 export function forgetWorktree(db: Db, path: string): void {
@@ -338,8 +350,79 @@ export interface ReleasedWorktree {
   action: "removed" | "kept-branch" | "discarded" | "gone";
   /** The branch made to keep unmerged commits. */
   branch?: string;
+  /** Where the tree's work stands, read before its row and dir went (local trees only). */
+  landing?: Landing;
   /** Processes still in the tree when it was removed (their cwd, a read-only file; or, under `force`, a writer). */
   warnings?: string[];
+}
+
+/**
+ * A closed worktree's landing metadata: what a reader needs to verify
+ * later, with git alone, whether its work reached `targetRef`. Read before
+ * the registry row and the dir go; no pane is involved. Null: not known.
+ */
+export interface Landing {
+  /** The checkout the tree belonged to. */
+  repoRoot: string | null;
+  /** The ref it was cut from (`--from`, else the root's branch at spawn). */
+  targetRef: string | null;
+  /** The commit it was created at. */
+  baseSha: string | null;
+  /** Its HEAD at close (null: the dir was already gone). */
+  headSha: string | null;
+  /** The branch that keeps its unmerged commits (`mu/<ws>/<agent>-<sha12>`). */
+  preservedRef: string | null;
+}
+
+/**
+ * The `agent.close` op payload of a local close: the prose line (`text`, what
+ * `mu log` prints) plus the landing, snake_case, null for a close that handled
+ * no local tree (a non-worktree agent, a remote one).
+ */
+export function closePayload(text: string, name: string, landing: Landing | undefined): string {
+  const l = landing ?? null;
+  return JSON.stringify({
+    text,
+    name,
+    landing:
+      l === null
+        ? null
+        : {
+            repo_root: l.repoRoot,
+            target_ref: l.targetRef,
+            base_sha: l.baseSha,
+            head_sha: l.headSha,
+            preserved_ref: l.preservedRef,
+          },
+  });
+}
+
+/**
+ * The landing an `agent.close` op recorded (a `listLogs` row), or null: not an
+ * agent.close, or one that handled no local tree (prose payloads, from before
+ * the field or from lease and host closes, included).
+ */
+export function readCloseLanding(row: { intent: string | null; payload: string }): Landing | null {
+  if (row.intent !== "agent.close" || !row.payload.startsWith("{")) return null;
+  let bag: unknown;
+  try {
+    bag = JSON.parse(row.payload);
+  } catch {
+    return null;
+  }
+  const l = (bag as { landing?: unknown } | null)?.landing;
+  if (l === null || typeof l !== "object") return null;
+  const f = (k: string): string | null => {
+    const v = (l as Record<string, unknown>)[k];
+    return typeof v === "string" ? v : null;
+  };
+  return {
+    repoRoot: f("repo_root"),
+    targetRef: f("target_ref"),
+    baseSha: f("base_sha"),
+    headSha: f("head_sha"),
+    preservedRef: f("preserved_ref"),
+  };
 }
 
 /**
@@ -716,10 +799,17 @@ export async function releaseWorktree(
   }
   const before = await assertReleasable(row, opts);
   const owner = await liveRoot(row.root, row.path);
+  const landing = (head: string | null, preservedRef: string | null = null): Landing => ({
+    repoRoot: owner ?? (row.root === "" ? null : row.root),
+    targetRef: row.targetRef ?? null,
+    baseSha: row.base === "" ? null : row.base,
+    headSha: head,
+    preservedRef,
+  });
   if (before === "missing") {
     if (owner !== undefined) await removeWorktreeDir(owner, row.path, false);
     forgetWorktree(db, row.path);
-    return { path: row.path, action: "gone" };
+    return { path: row.path, action: "gone", landing: landing(null) };
   }
   await moveTree(owner, row.path, aside);
   const parked: WorktreeRow = { ...row, path: aside };
@@ -738,14 +828,15 @@ export async function releaseWorktree(
     // Judged again under the park: a write that raced the first check counts.
     const state = await assertReleasable(parked, opts);
     if (state === "missing") throw new Error(`worktree ${aside} vanished while closing`);
+    const head = await headSha(aside).catch(() => null);
     if (opts.discard === true) {
       await removeWorktreeDir(owner, aside, true);
       forgetWorktree(db, row.path);
-      return { path: row.path, action: "discarded", ...said };
+      return { path: row.path, action: "discarded", landing: landing(head), ...said };
     }
     if (state === "clean-unmerged") {
       if (owner === undefined) throw new Error(say("worktree.unmerged_repo_gone", row.path));
-      const sha = await headSha(aside);
+      const sha = head ?? (await headSha(aside));
       const branch = `mu/${row.workstream}/${row.agent}-${sha.slice(0, 12)}`;
       // Create-only: a retry finds its own branch at this HEAD and goes on.
       if (!(await createBranch(owner, branch, sha))) {
@@ -753,7 +844,13 @@ export async function releaseWorktree(
       }
       await removeWorktreeDir(owner, aside, false);
       forgetWorktree(db, row.path);
-      return { path: row.path, action: "kept-branch", branch, ...said };
+      return {
+        path: row.path,
+        action: "kept-branch",
+        branch,
+        landing: landing(sha, branch),
+        ...said,
+      };
     }
     // clean-merged. Without --force git itself refuses a write that raced the check.
     try {
@@ -770,7 +867,7 @@ export async function releaseWorktree(
       throw err;
     }
     forgetWorktree(db, row.path);
-    return { path: row.path, action: "removed", ...said };
+    return { path: row.path, action: "removed", landing: landing(head), ...said };
   } catch (err) {
     // Nothing was removed: put the tree back where its agent and registry say it is.
     if (existsSync(aside) && !existsSync(row.path)) await moveTree(owner, aside, row.path);

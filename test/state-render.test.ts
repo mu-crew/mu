@@ -257,7 +257,10 @@ describe("the op formatter", () => {
           intent: string | null;
           payload: string;
         }): boolean =>
-          r.intent !== null && localEntities.includes(r.kind) && !r.payload.startsWith("{");
+          r.intent !== null &&
+          localEntities.includes(r.kind) &&
+          // agent.close carries its prose in `text` beside the landing (fsj U2).
+          (!r.payload.startsWith("{") || r.payload.startsWith('{"text":'));
         const rows = listLogs(db, {}).filter(isLocalEmit);
         const highWater = rows.length === 0 ? 0 : Math.max(...rows.map((r) => r.seq));
         return Promise.resolve(fn()).then(() => {

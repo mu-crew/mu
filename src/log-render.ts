@@ -399,13 +399,14 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
       // These payloads are prose by construction (emitEvent writes them).
       // Guard anyway: a JSON payload here would otherwise be dumped raw
       // into the line, and "no raw JSON in mu log" is a hard property.
-      if (row.payload.startsWith("{")) {
+      // agent.close carries its prose in `text` beside the landing (src/worktree.ts closePayload).
+      const text = str(bag, "text");
+      if (row.payload.startsWith("{") && text === undefined) {
         const named = str(bag, "name") ?? subject;
         return { verb, subject: named, detail: changedFields(bag).join(" ") };
       }
-      const prose = row.payload.startsWith(verb)
-        ? row.payload.slice(verb.length).trim()
-        : row.payload;
+      const said = text ?? row.payload;
+      const prose = said.startsWith(verb) ? said.slice(verb.length).trim() : said;
       const firstSpace = prose.indexOf(" ");
       const name = firstSpace === -1 ? prose : prose.slice(0, firstSpace);
       const rest = firstSpace === -1 ? "" : prose.slice(firstSpace + 1).trim();
