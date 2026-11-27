@@ -144,6 +144,60 @@ gitDescribe("agent.close records the landing", () => {
     expect(getWorktreeAt(db, worktreePath("auth", "worker-1"))?.targetRef).toBeNull();
   });
 
+  it("--from a branch: target_ref is that branch", async () => {
+    const base = gitIn(root, "rev-parse", "HEAD");
+    gitIn(root, "branch", "feature", base);
+    await spawnAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      worktree: true,
+      root,
+      from: "feature",
+    });
+    expect(getWorktreeAt(db, worktreePath("auth", "worker-1"))?.targetRef).toBe(
+      "refs/heads/feature",
+    );
+    await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(lastClose().landing).toMatchObject({
+      repoRoot: root,
+      targetRef: "refs/heads/feature",
+      baseSha: base,
+      headSha: base,
+    });
+  });
+
+  it("--discard: action discarded, the landing keeps head and no preserved ref", async () => {
+    await spawn("worker-1");
+    const path = worktreePath("auth", "worker-1");
+    const base = gitIn(root, "rev-parse", "HEAD");
+    const head = commitFileIn(path, "w.txt", "own work");
+    const r = await closeAgent(db, "worker-1", { workstream: "auth", discard: true });
+    expect(r.worktree?.action).toBe("discarded");
+    expect(lastClose().landing).toEqual({
+      repoRoot: root,
+      targetRef: "refs/heads/main",
+      baseSha: base,
+      headSha: head,
+      preservedRef: null,
+    });
+  });
+
+  it("a worktree dir deleted beforehand: action gone, head sha null", async () => {
+    await spawn("worker-1");
+    const path = worktreePath("auth", "worker-1");
+    const base = gitIn(root, "rev-parse", "HEAD");
+    rmSync(path, { recursive: true, force: true });
+    const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(r.worktree?.action).toBe("gone");
+    expect(lastClose().landing).toEqual({
+      repoRoot: root,
+      targetRef: "refs/heads/main",
+      baseSha: base,
+      headSha: null,
+      preservedRef: null,
+    });
+  });
+
   it("readCloseLanding: a JSON array or a non-object landing reads as none", () => {
     const row = (payload: string) => ({ intent: "agent.close", payload });
     expect(readCloseLanding(row("[1,2]"))).toBeNull();
