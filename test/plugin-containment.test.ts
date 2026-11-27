@@ -22,7 +22,7 @@ import {
 } from "../src/plugins/process.js";
 import { encodeMessage, narrowLinkRun } from "../src/plugins/protocol.js";
 import { addPlugin, closePluginSessions, pluginSession } from "../src/plugins/registry.js";
-import { sleep } from "./_env.js";
+import { alive, sleep } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin } from "./_plugin.js";
 
@@ -53,14 +53,6 @@ afterEach(async () => {
   rmFixtureDir(dir);
 });
 
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 const groupGone = (pgid: number): boolean => !alive(-pgid);
 async function until(fn: () => boolean, ms = 3000): Promise<void> {
   for (const t0 = Date.now(); !fn(); await sleep(20)) {

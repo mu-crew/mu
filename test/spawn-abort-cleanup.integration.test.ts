@@ -23,20 +23,13 @@ import { promisify } from "node:util";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stateDirIn } from "../src/state-dir.js";
+import { alive } from "./_env.js";
 import { copyGitFixture } from "./_git.js";
 
 const execFileP = promisify(execFile);
 const CLI = join(process.cwd(), "dist", "cli.js");
 const describeIfBuilt = existsSync(CLI) ? describe : describe.skip;
 
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 const poll = async (fn: () => boolean, tries = 100): Promise<boolean> => {
   for (let i = 0; i < tries; i++) {
     if (fn()) return true;

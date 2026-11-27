@@ -33,7 +33,7 @@ import {
 } from "../src/plugins/process.js";
 import { narrowLinkRun } from "../src/plugins/protocol.js";
 import { addPlugin, closePluginSessions, pluginSession } from "../src/plugins/registry.js";
-import { sleep } from "./_env.js";
+import { alive, sleep } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin } from "./_plugin.js";
 
@@ -83,14 +83,6 @@ async function until(fn: () => boolean, ms = 5000): Promise<void> {
 /** The pid sh wrote to `file`, or "0" until the file exists and holds one. */
 const readRunPid = (file: string): string =>
   existsSync(file) ? readFileSync(file, "utf8").trim() || "0" : "0";
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 let saved: Array<(...a: unknown[]) => void>;
 beforeAll(() => {

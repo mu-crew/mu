@@ -37,6 +37,7 @@ import { addTask } from "../src/tasks/edit.js";
 import { getTask } from "../src/tasks.js";
 import { tmux } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { alive } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { copyGitFixture, gitIn } from "./_git.js";
 import { killPrivateSession, tmuxIntegrationAvailable } from "./_mux.js";
@@ -106,14 +107,6 @@ const ENV_KEYS = ["HOME", "SEEN", "MU_SPAWN_CTL_MS", "MU_SPAWN_LIVENESS_MS"];
 const channels = () => listHostChannels(db, "dev");
 const seen = (): { pid: number; cwd: string; env: Record<string, string> } =>
   JSON.parse(readFileSync(join(dir, "seen.json"), "utf8"));
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 async function until(cond: () => boolean, what: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
     if (cond()) return;

@@ -72,3 +72,13 @@ export async function withCleanIdentityEnv(fn: () => Promise<void>): Promise<voi
 
 /** Resolve after `ms`. For a deliberate pause; prefer pollUntil() to wait for state. */
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Is a process with this pid running (signal 0)? */
+export function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}

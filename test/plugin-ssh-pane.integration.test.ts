@@ -18,6 +18,7 @@ import { connect, createServer } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { alive } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { SSH_EXAMPLE } from "./_plugin.js";
 import { type FakeSsh, fakeSsh, PluginWire } from "./_ssh-pane.js";
@@ -50,15 +51,6 @@ function killGroup(pid: number | undefined): void {
 }
 
 const q = (v: string): string => `'${v.replaceAll("'", "'\\''")}'`;
-
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 async function until(ok: () => boolean, what: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
