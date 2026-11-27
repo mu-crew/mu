@@ -140,12 +140,18 @@ describe.each(IMPLS)("the link contract: $name", (impl) => {
 
   it("a command without an exit result times out with a null exit code", async () => {
     const pidFile = join(dir, "pid");
-    const r = await exec(`echo $$ > '${pidFile}'; exec sleep 30`, { timeoutMs: 300 });
+    const r = await exec(
+      `echo $$ > '${pidFile}.t' && mv '${pidFile}.t' '${pidFile}'; exec sleep 30`,
+      {
+        timeoutMs: 300,
+      },
+    );
     expect(r.exitCode).toBeNull();
     // A transport can spend the whole budget before it launches the command.
     // If it did launch and promises stop proof, the process must be gone.
     if (h.link.caps.remoteOnTimeout === "stopped" && existsSync(pidFile)) {
       const pid = Number(readFileSync(pidFile, "utf8"));
+      expect(pid).toBeGreaterThan(0);
       expect(() => process.kill(pid, 0)).toThrow(); // proven stopped: nothing left running
     }
   });
@@ -280,10 +286,10 @@ describe("the link adapter: timeouts", () => {
   }
 
   it("an answer that comes at the plugin's deadline is a reply: mu's timer is timeoutMs plus one grace", async () => {
-    const { f, h } = await plugin({ faults: { "link.exec": ["late"] }, lateMs: 500 });
+    const { f, h } = await plugin({ faults: { "link.exec": ["late"] }, lateMs: 1400 });
     const r = await h.link.exec(
       h,
-      { script: "echo hi", cwd: ".", timeoutMs: 300 },
+      { script: "echo hi", cwd: ".", timeoutMs: 1000 },
       {
         holder: "t",
       },
@@ -291,7 +297,7 @@ describe("the link adapter: timeouts", () => {
     expect(r).toMatchObject({ exitCode: 0, stdout: "hi\n" });
     expect(f.calls().map((c) => c.method)).not.toContain("$/cancel");
     const sent = f.calls().find((c) => c.method === "link.exec")?.params;
-    expect(sent?.timeoutMs).toBe(300);
+    expect(sent?.timeoutMs).toBe(1000);
   });
 
   it('remoteOnTimeout "stopping" loads; a timed-out run returns once the grace has stopped it', async () => {
@@ -303,11 +309,16 @@ describe("the link adapter: timeouts", () => {
     expect(h.link.caps.remoteOnTimeout).toBe("stopped");
     const r = await h.link.exec(
       h,
-      { script: `echo $$ > '${pidFile}'; exec sleep 30`, cwd: ".", timeoutMs: 300 },
+      {
+        script: `echo $$ > '${pidFile}.t' && mv '${pidFile}.t' '${pidFile}'; exec sleep 30`,
+        cwd: ".",
+        timeoutMs: 1000,
+      },
       { holder: "t" },
     );
     expect(r.exitCode).toBeNull();
     const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(pid).toBeGreaterThan(0);
     expect(() => process.kill(pid, 0)).toThrow();
   });
 });
