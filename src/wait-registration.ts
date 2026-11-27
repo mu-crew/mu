@@ -424,24 +424,31 @@ const laneRow = (caller: string, lane: WaitLane): string =>
 /**
  * Start a wait for `caller`: bump the generation, mark the row `waiting`,
  * return the generation and the refs owed now. undefined (and nothing
- * written) when the caller owes nothing. An earlier wait of the same lane still
- * marked `waiting` is superseded: its `endWait` will no longer match.
+ * written) when the caller owes nothing, unless `claim`: then the wait is
+ * numbered anyway (the row created if need be), so refs a producer registers
+ * mid-wait are dropped under this generation and a newer wait still supersedes
+ * this one. An earlier wait of the same lane still marked `waiting` is
+ * superseded: its `endWait` will no longer match.
  */
 export function beginWait(
   db: Db,
   caller: string,
   lane: WaitLane = "shell",
+  opts: { claim?: boolean } = {},
 ):
   | { generation: number; refs: RegisteredRef[]; baselines: Record<string, RefBaseline> }
   | undefined {
   return db
     .transaction(() => {
       const row = select(db, caller);
-      if (row === undefined) return undefined;
-      const reg = parse(row);
-      if (reg.refs.length === 0) return undefined;
+      const reg = row === undefined ? undefined : parse(row);
+      if (reg === undefined || reg.refs.length === 0) {
+        if (opts.claim !== true) return undefined;
+      }
+      const refs = reg?.refs ?? [];
+      const baselines = reg?.baselines ?? {};
       const now = new Date().toISOString();
-      if (lane === "settle") {
+      if (lane === "settle" || reg === undefined) {
         const { generation } = db
           .prepare(
             `INSERT INTO wait_registrations (caller, refs_json, state, generation, updated_at) VALUES (?, '[]', 'waiting', 1, ?)
@@ -449,7 +456,7 @@ export function beginWait(
              RETURNING generation`,
           )
           .get(laneRow(caller, lane), now) as { generation: number };
-        return { generation, refs: reg.refs, baselines: reg.baselines };
+        return { generation, refs, baselines };
       }
       const generation = reg.generation + 1;
       db.prepare(
@@ -488,7 +495,15 @@ export function endWait(
         return { applied: false };
       }
       const row = lane === "shell" ? own : select(db, caller);
-      if (row === undefined) return { applied: false };
+      const now = new Date().toISOString();
+      const rearm = db.prepare(
+        "UPDATE wait_registrations SET state = 'armed', updated_at = ? WHERE caller = ?",
+      );
+      if (row === undefined) {
+        // A claimed settle wait of a caller with no registration: nothing is owed to drop.
+        rearm.run(now, laneRow(caller, lane));
+        return { applied: true };
+      }
       const reg = parse(row);
       const gone = new Set(canonical(delivered).map(keyOf));
       // A send armed after the delivered run (producer fence >= the run) still owes the run that
@@ -514,13 +529,10 @@ export function endWait(
       const kept = Object.fromEntries(
         Object.entries(baselines).filter(([k]) => left.some((r) => refKeyOf(r) === k)),
       );
-      const now = new Date().toISOString();
       db.prepare(
         "UPDATE wait_registrations SET refs_json = ?, baselines_json = ?, updated_at = ? WHERE caller = ?",
       ).run(JSON.stringify(left), JSON.stringify(kept), now, caller);
-      db.prepare(
-        "UPDATE wait_registrations SET state = 'armed', updated_at = ? WHERE caller = ?",
-      ).run(now, laneRow(caller, lane));
+      rearm.run(now, laneRow(caller, lane));
       return { applied: true };
     })
     .immediate();

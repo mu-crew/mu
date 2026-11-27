@@ -225,9 +225,11 @@ export async function waitForEvents(
   // own delegate cursors (src/wait-cursor.ts): neither supersedes nor hides answers from the other.
   const lane = opts.settleLane === true ? "settle" : "shell";
   const begun = new Map<string, NonNullable<ReturnType<typeof beginWait>>>();
+  // Claimed even when the caller owes nothing yet: refs registered mid-wait (discoverSpawned, a
+  // concurrent producer) are then dropped under this generation, and a newer wait supersedes it.
   if (consumes) {
     for (const c of callers) {
-      const b = beginWait(db, c, lane);
+      const b = beginWait(db, c, lane, { claim: true });
       if (b !== undefined) begun.set(c, b);
     }
   }
@@ -635,15 +637,6 @@ export async function waitForEvents(
     if (opts.sync !== false) await ambientIngest(db, { quiet: true });
     const selected = targetsOnly ? selectedKeys(blockerRefs()) : undefined;
     discoverSpawned(selected);
-    // A caller that owed nothing when the wait began may owe refs now (discovered above, or a
-    // concurrent producer): begin its wait so a delivery drops them under a generation.
-    if (consumes) {
-      for (const c of callers) {
-        if (begun.has(c)) continue;
-        const b = beginWait(db, c, lane);
-        if (b !== undefined) begun.set(c, b);
-      }
-    }
     const owned = ownedRefs(selected);
     for (const r of explicit.values()) if (r.kind === "agent") track(r, true);
     for (const r of owned) if (r.kind === "agent") track(r, explicit.has(refKey(r)));

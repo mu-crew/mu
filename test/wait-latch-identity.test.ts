@@ -180,7 +180,11 @@ describe("delivery re-reads the cursor in its transaction (fix_latch_identity P2
       });
       expect(theirs).toBe(d1);
       expect(mine.event).toMatchObject({ kind: "delegate", ref: { id: d2 } });
-      expect(mine.superseded).toBeUndefined();
+      // B began after A as the same caller, so B's wait supersedes A's: d2 stays unconsumed.
+      expect(mine.superseded).toBe(true);
+      expect(mine.eventConsumed).toBe(false);
+      const next = await waitForEvents(env.db, [], { ...base, callers: ["pi:s"], timeoutMs: 200 });
+      expect(next.event.ref?.id).toBe(d2);
     } finally {
       other.close();
     }
