@@ -54,8 +54,8 @@ function fakePi() {
       state.level = l === "xhigh" && state.model?.id === "claude-haiku-4-5" ? "high" : l;
     }),
   };
-  const emit = async (event: string) => {
-    for (const h of handlers.get(event) ?? []) await h({ type: event }, ctx);
+  const emit = async (event: string, extra: Record<string, unknown> = {}) => {
+    for (const h of handlers.get(event) ?? []) await h({ type: event, ...extra }, ctx);
   };
   return { pi, ctx, emit, state };
 }
@@ -162,5 +162,30 @@ describe("model op", () => {
       }),
     ).toMatchObject({ ok: false, error: INCARNATION_MISMATCH });
     expect(fake.pi.setModel).not.toHaveBeenCalled();
+  });
+});
+
+describe("stale ctx", () => {
+  it("status fails closed to busy when pi throws on read", async () => {
+    fake.pi.getThinkingLevel = () => {
+      throw new Error("stale");
+    };
+    expect(await ctlRequest(sock, { op: "status" })).toMatchObject({
+      ok: true,
+      state: "busy",
+      pending: false,
+    });
+  });
+
+  it("a session-switch shutdown drops the old ctx, so status never reads it", async () => {
+    fake.ctx.hasPendingMessages = () => {
+      throw new Error("stale");
+    };
+    await fake.emit("session_shutdown", { reason: "new" });
+    expect(await ctlRequest(sock, { op: "status" })).toMatchObject({
+      ok: true,
+      state: "idle",
+      pending: false,
+    });
   });
 });

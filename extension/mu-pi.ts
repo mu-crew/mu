@@ -533,7 +533,22 @@ function serveCtl(pi: MuPiApi): () => boolean {
   (g as Partial<Shared>).tools ??= new Map();
   map.set(sockPath, g);
 
-  const status = () => ({
+  /** A stale ctx or pi (mid session switch) throws on read; fail closed to busy. */
+  const status = () => {
+    try {
+      return statusNow();
+    } catch {
+      return {
+        incarnation: g.incarnation,
+        state: "busy" as CtlState,
+        since: g.since,
+        runs: g.runs,
+        pending: false,
+      };
+    }
+  };
+
+  const statusNow = () => ({
     incarnation: g.incarnation,
     state: g.state,
     since: g.since,
@@ -1088,6 +1103,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     // runtime. Only quit (or an unknown reason) tears the server down.
     const reason = reasonOf(e);
     if (reason === "new" || reason === "resume" || reason === "fork" || reason === "reload") {
+      g.ctx = undefined; // the old runtime's ctx is stale; the next session_start sets a fresh one
       return;
     }
     const s = g.server;
