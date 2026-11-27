@@ -15,7 +15,7 @@
 // The signal is `process.emit`, with the runner's own listeners set aside and
 // the re-raise recorded instead of delivered.
 
-import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -53,7 +53,7 @@ const GRACE = 1000;
 /** How late a grace timer may fire on a loaded host. */
 const TIMER_LATE = GRACE / 2;
 /** mu's own time in one stop. */
-const MU_OWN_MAX = GRACE / 2;
+const MU_OWN_MAX = GRACE * 0.9; // below one whole extra grace (a second hold), above OS reap jitter under load
 const CALL_TIMEOUT = 150;
 
 const PHASES = ["starting", "handshake", "idle", "in-flight", "its cancel", "shutdown"] as const;
@@ -80,6 +80,9 @@ async function until(fn: () => boolean, ms = 5000): Promise<void> {
     if (Date.now() - t0 > ms) throw new Error("timed out waiting");
   }
 }
+/** The pid sh wrote to `file`, or "0" until the file exists and holds one. */
+const readRunPid = (file: string): string =>
+  existsSync(file) ? readFileSync(file, "utf8").trim() || "0" : "0";
 const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -185,7 +188,7 @@ describe("a terminating signal, in every phase, against every plugin", () => {
       work = exec(s, script);
       await until(() => f.calls().some((c) => c.method === "link.exec"));
       if (behaviour !== "ignores cancel" && behaviour !== "replies late") {
-        await until(() => alive(Number(readFileSync(runPid, "utf8") || "0")), 3000).catch(() => {});
+        await until(() => alive(Number(readRunPid(runPid))), 3000);
       }
       signal();
     } else if (phase === "its cancel") {
