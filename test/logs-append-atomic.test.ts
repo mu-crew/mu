@@ -96,8 +96,10 @@ describe("appendLog result agrees with listLogs", () => {
   it("workstreamName is the workstream parsed from the key", () => {
     const x = appendLog(a, { workstream: "crew-rex/x#1", source: "u", payload: "p" });
     const y = appendLog(a, { workstream: null, source: "u", payload: "q" });
+    const z = appendLog(a, { workstream: "", source: "u", payload: "r" });
+    expect(z.workstreamName).toBeNull();
     const rows = listLogs(a, {});
-    for (const r of [x, y]) {
+    for (const r of [x, y, z]) {
       const l = rows.find((z) => z.seq === r.seq);
       expect(l?.key).toBe(r.key);
       expect(l?.workstreamName).toBe(r.workstreamName);

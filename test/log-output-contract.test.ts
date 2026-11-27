@@ -141,9 +141,7 @@ describe("text: one record per visible op", () => {
     const raw = db
       .prepare("SELECT COUNT(*) AS n FROM ops WHERE intent IS NOT NULL AND key LIKE 'demo/a%'")
       .get() as { n: number };
-    const visible = listLogs(db, { workstream: "demo" }).filter((x) =>
-      x.key.startsWith("demo/a"),
-    );
+    const visible = listLogs(db, { workstream: "demo" }).filter((x) => x.key.startsWith("demo/a"));
     expect(visible).toHaveLength(2); // add + note; a leaked touch would make it 3
     expect(raw.n).toBeGreaterThan(visible.length); // the touch stays in ops, hidden from the log
   });
