@@ -19,7 +19,12 @@ import { type Db, SYNCED_ENTITIES } from "./db.js";
 import { nextHlc } from "./hlc.js";
 import { parseOpKey } from "./log-render.js";
 import { say } from "./messages.js";
-import { type ActorRole, resolveActorRole, resolveProvenance } from "./provenance.js";
+import {
+  type ActorRole,
+  resolveActorIdentitySync,
+  resolveActorRole,
+  resolveProvenance,
+} from "./provenance.js";
 import { singleLinePayload } from "./segment-line.js";
 
 export type LogKind = "message" | "event" | "broadcast" | string;
@@ -640,6 +645,12 @@ export function latestSeq(db: Db, workstream?: string): number {
  * prefix-matching prose, which is the brittleness
  * (`classifyEventVerb`, `CLAIM_EVENT_PREFIX`) the ops log deletes.
  *
+ * When `source` is omitted, it resolves via `resolveActorIdentitySync()`
+ * (`$MU_AGENT_NAME` > `$USER` > `'orchestrator'`), so actor-initiated
+ * events attribute the caller and resolve `actor_role`. Genuinely system
+ * or passive events must pass an explicit system actor (`"system"`,
+ * `"reaper"`, ...) so `resolveActorRole` yields `null`.
+ *
  * These entities are deliberately NOT in SYNCED_ENTITIES: every one of
  * them describes something about THIS machine (a pane id, a filesystem
  * path) that is meaningless on a peer. They are still recorded, so
@@ -650,7 +661,7 @@ export function emitEvent(
   workstream: string | null,
   intent: LocalIntent,
   payload: string,
-  source = "system",
+  source: string = resolveActorIdentitySync(),
 ): void {
   appendLog(db, { workstream, source, kind: entityForIntent(intent), payload, intent });
 }

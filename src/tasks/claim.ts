@@ -17,6 +17,7 @@ import { GUARD_ALREADY_OWNED } from "../capture.js";
 import type { Db } from "../db.js";
 import { say } from "../messages.js";
 import { withOpContext } from "../op-context.js";
+import { resolveActorIdentitySync } from "../provenance.js";
 import { assertTaskRevision } from "../revision.js";
 import {
   ClaimerNotRegisteredError,
@@ -463,11 +464,7 @@ function assertNotParked(
  * identity: nothing reads or writes them.
  */
 export async function resolveActorIdentity(): Promise<string> {
-  const worker = await resolveWorkerIdentity();
-  if (worker !== undefined) return worker;
-  const user = process.env.USER;
-  if (user !== undefined && user !== "") return user;
-  return "orchestrator";
+  return resolveActorIdentitySync();
 }
 
 /**

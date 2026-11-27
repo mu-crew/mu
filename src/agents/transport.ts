@@ -52,7 +52,7 @@ export function recordSend(
   bytes: number,
   fields: Record<string, string | number | boolean | undefined>,
   /** Who sent it (resolveActorIdentity); lands in `ops.actor`. */
-  source = "system",
+  source?: string,
 ): void {
   const detail = Object.entries({ mode, ...fields })
     .filter(([, v]) => v !== undefined)

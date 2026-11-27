@@ -88,6 +88,19 @@ export function resolveProvenance(env: NodeJS.ProcessEnv = process.env): Provena
   return { actorSession: actorSession || null, actorAnchor: actorAnchor || null };
 }
 
+/**
+ * Synchronous actor identity for ops attribution: `$MU_AGENT_NAME` > `$USER` >
+ * `'orchestrator'`. Shared by `emitEvent` (when no explicit `source` is passed)
+ * and `resolveActorIdentity` (src/tasks/claim.ts).
+ */
+export function resolveActorIdentitySync(env: NodeJS.ProcessEnv = process.env): string {
+  const muAgent = env.MU_AGENT_NAME;
+  if (muAgent !== undefined && muAgent !== "") return muAgent;
+  const user = env.USER;
+  if (user !== undefined && user !== "") return user;
+  return "orchestrator";
+}
+
 /** The capacity an op's session acted in; `ops.actor_role`. */
 export type ActorRole = "orchestrator" | "worker" | "delegate";
 

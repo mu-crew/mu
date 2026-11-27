@@ -372,6 +372,61 @@ describe("actor_role", () => {
     }
   });
 
+  it("un-sourced emitEvent resolves actor identity; only an explicit system source nulls actor_role", async () => {
+    const db = openDb({ path: join(dir, "mu.db") });
+    try {
+      insertAgent(db, { name: "w1", workstream: "w", paneId: "%1" });
+
+      // Non-agent session with PI_SESSION_ID set and no MU_* vars (e.g. plugin-host agent.spawn).
+      await withEnvs(
+        {
+          MU_ACTOR_SESSION: undefined,
+          PI_SESSION_ID: "orch-probe",
+          MU_MANAGED_AGENT: undefined,
+          MU_WORKSTREAM: undefined,
+          MU_AGENT_NAME: undefined,
+          MU_ORCHESTRATOR: undefined,
+          MU_DELEGATE: undefined,
+        },
+        () => {
+          emitEvent(db, "w", "agent.spawn", "agent spawn p1 (host=plug)");
+          emitEvent(db, "w", "agent.spawn", "explicit system spawn", "system");
+        },
+      );
+
+      // Registered worker's un-sourced emitEvent (e.g. agent.reattach).
+      await withEnvs(WORKER, () => {
+        emitEvent(db, "w", "agent.reattach", "agent reattach w1 (host=h, job=j, pane=%1, ctl=ok)");
+      });
+
+      const rows = listLogs(db, { workstream: "w" });
+      const unsourcedSpawn = rows.find((r) => r.payload.includes("host=plug"));
+      expect(unsourcedSpawn).toMatchObject({
+        intent: "agent.spawn",
+        actorSession: "pi:orch-probe",
+        actorRole: "orchestrator",
+      });
+      expect(unsourcedSpawn?.source).not.toBe("system");
+
+      const explicitSystem = rows.find((r) => r.payload === "explicit system spawn");
+      expect(explicitSystem).toMatchObject({
+        intent: "agent.spawn",
+        source: "system",
+        actorSession: "pi:orch-probe",
+        actorRole: null,
+      });
+
+      const workerReattach = rows.find((r) => r.intent === "agent.reattach");
+      expect(workerReattach).toMatchObject({
+        source: "w1",
+        actorSession: "pi:w1",
+        actorRole: "worker",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   it("listSessionRoles answers who orchestrated what in one call, through the SDK, with since", async () => {
     const db = openDb({ path: join(dir, "mu.db") });
     try {
