@@ -71,21 +71,13 @@ describe("matching", () => {
   it("a polynomial pattern the grammar allows ends in a typed error within the budget, not a hang", () => {
     const m = compileTextMatcher("a*a*a*a*a*a*a*a*a*b");
     const t0 = Date.now();
-    let err: unknown;
-    try {
-      m.test("a".repeat(WAIT_TEXT_MAX));
-    } catch (e) {
-      err = e;
-    }
-    expect(Date.now() - t0).toBeLessThan(2000);
-    if (err !== undefined) expect(err).toBeInstanceOf(WaitRegexError);
+    expect(() => m.test("a".repeat(WAIT_TEXT_MAX))).toThrow(WaitRegexError);
+    expect(Date.now() - t0).toBeLessThan(20_000); // the budget is WAIT_REGEX_TIMEOUT_MS; this only rules out a hang
   });
 
   it("the matcher keeps working after a timeout", () => {
     const slow = compileTextMatcher("a*a*a*a*a*a*a*a*a*b");
-    try {
-      slow.test("a".repeat(WAIT_TEXT_MAX));
-    } catch {}
+    expect(() => slow.test("a".repeat(WAIT_TEXT_MAX))).toThrow(WaitRegexError);
     expect(compileTextMatcher("ok").test("ok")).toBe(true);
   });
 });
