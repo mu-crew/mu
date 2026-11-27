@@ -58,6 +58,8 @@ export type WaitAction = (typeof WAIT_ACTIONS)[number];
  */
 export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: string])[] = [
   ["agents", "command", "TEXT"],
+  // A spawn's non-fatal warning (its pane's crew tags did not set): spawn_receipts.warning.
+  ["spawn_receipts", "warning", "TEXT"],
   ["agents", "command_source", "TEXT"],
   // Schema 13: the loop's storage. kind/wave are portable (synced);
   // spawner/host/collected_head are machine-local agent metadata.

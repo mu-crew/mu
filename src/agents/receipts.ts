@@ -53,6 +53,8 @@ export interface SpawnReceipt {
   runs: number | null;
   state: SpawnReceiptState;
   detail: string | null;
+  /** A non-fatal spawn warning (the pane's crew tags did not set); kept across transitions. */
+  warning: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -71,6 +73,7 @@ interface RawReceipt {
   runs: number | null;
   state: SpawnReceiptState;
   detail: string | null;
+  warning: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -89,6 +92,7 @@ const fromRaw = (r: RawReceipt): SpawnReceipt => ({
   runs: r.runs,
   state: r.state,
   detail: r.detail,
+  warning: r.warning ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -233,6 +237,7 @@ export type ReceiptPatch = Partial<
     | "incarnation"
     | "runs"
     | "detail"
+    | "warning"
     | "msgId"
     | "requestSha"
   >
@@ -246,6 +251,7 @@ const COLUMN: Record<keyof ReceiptPatch, string> = {
   incarnation: "incarnation",
   runs: "runs",
   detail: "detail",
+  warning: "warning",
   msgId: "msg_id",
   requestSha: "request_sha",
 };
@@ -364,5 +370,6 @@ export function resetReceipt(
     incarnation: null,
     runs: null,
     detail: null,
+    warning: null,
   });
 }

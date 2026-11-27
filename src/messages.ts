@@ -305,6 +305,12 @@ export const MESSAGES = {
     `hint: agent name "${name}" does not match the smallest-unused-suffix convention (<role>-<n>; e.g. worker-1, reviewer-2). Accepted; consider renaming if you spawn additional workers.\n`,
   "agent.spawn_trust_warning": (name: string, skipped: boolean) =>
     `${name} is showing Claude's folder-trust dialog (default "No, exit")${skipped ? "; --send skipped" : ""}`,
+  "agent.tags_not_set": (pane: string, why: string) =>
+    `@mu_* tags not set on ${pane} (tmux: ${why}); murmur will show this agent as human; fix: mu agent retag`,
+  "agent.crew_tags_wrong": (name: string, ws: string, pane: string, wrong: string) =>
+    `${ws}/${name} (${pane}): ${wrong}; murmur shows it as human; fix: mu agent retag -w ${ws} ${name}`,
+  "agent.rex_session_label": (label: string, ws: string) =>
+    `its Rex session is labelled ${JSON.stringify(label)}, not mu-${ws} (retag sets only the block label)`,
   "agent.send_interrupt_excl": (flag: string) => `--interrupt and ${flag} are mutually exclusive`,
   "agent.send_interrupt_slash": () => "--interrupt sends a prompt, not a slash command",
   "agent.send_interrupt_empty": () => "--interrupt needs a non-empty prompt",

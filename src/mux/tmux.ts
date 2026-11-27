@@ -29,6 +29,9 @@ import {
 import {
   type AttachTarget,
   type CaptureOptions,
+  type CrewIdentity,
+  type CrewTags,
+  crewPaneOptions,
   type EnsureSessionResult,
   MU_PLACEHOLDER_WINDOW,
   type MuxBackend,
@@ -518,14 +521,13 @@ export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
     // Crew identity for murmur 3.0 (@mu_agent, @mu_workstream, @mu_role), beside the MU_* env.
     // Best effort: a tag that fails to set must not cost the agent its pane.
     // One tmux invocation (`;`-chained), so the tags land together or not at all.
-    const tags = Object.entries(opts.paneOptions ?? {});
-    if (tags.length > 0) {
+    // A failure is reported (`onTagFailure`), never thrown: `mu agent retag` repairs it.
+    const tags = opts.paneOptions ?? {};
+    if (Object.keys(tags).length > 0) {
       try {
-        await paneTmuxCommands(ref, (id) =>
-          tags.map(([name, value]) => ["set-option", "-p", "-t", id, name, value]),
-        );
-      } catch {
-        // untagged is still a working pane
+        await setPaneOptions(ref, tags);
+      } catch (err) {
+        opts.onTagFailure?.(say("agent.tags_not_set", paneId, tmuxFailure(err)));
       }
     }
     opts.onPaneCreated?.(paneId, identity);
@@ -895,6 +897,51 @@ export async function pasteToPane(
   await paneTmux(ref, (id) => ["send-keys", "-t", id, "Enter"]);
 }
 
+/** Set several user options on this pane only, in ONE guarded invocation (all or none). */
+export async function setPaneOptions(ref: PaneRef, options: Record<string, string>): Promise<void> {
+  const entries = Object.entries(options);
+  await paneTmuxCommands(ref, (id) =>
+    entries.map(([name, value]) => ["set-option", "-p", "-t", id, name, value]),
+  );
+}
+
+/** A tmux failure's own words (its stderr), for a warning line. */
+function tmuxFailure(err: unknown): string {
+  if (err instanceof TmuxError) return err.stderr.trim() || `exit ${err.exitCode}`;
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The crew tags of every pane on the server, ONE `list-panes -a` call: pane id to
+ * `{ agent, workstream, role }` (`""` unset), each with the server identity it was read on.
+ * An empty map when no server runs.
+ */
+export async function readCrewTags(): Promise<Map<string, CrewTags>> {
+  const args = [
+    "list-panes",
+    "-a",
+    "-F",
+    "#{pane_id}|#{pid}|#{start_time}|#{@mu_agent}|#{@mu_workstream}|#{@mu_role}",
+  ];
+  const result = await currentExecutor(args);
+  const out = new Map<string, CrewTags>();
+  if (result.exitCode !== 0) {
+    if (NO_SERVER_RE.test(result.stderr) || /no sessions/i.test(result.stderr)) return out;
+    throw new TmuxError(args, result.stderr, result.stdout, result.exitCode);
+  }
+  for (const line of result.stdout.split("\n")) {
+    const [paneId, pid, start, agent, workstream, role] = line.split("|");
+    if (paneId === undefined || role === undefined || !PANE_ID_RE.test(paneId)) continue;
+    out.set(paneId, {
+      agent: agent ?? "",
+      workstream: workstream ?? "",
+      role,
+      server: `${pid}|${start}`,
+    });
+  }
+  return out;
+}
+
 /** Set the user option `name` (`@…`) on this pane only. */
 export async function setPaneOption(ref: PaneRef, name: string, value: string): Promise<void> {
   await paneTmux(ref, (id) => ["set-option", "-p", "-t", id, name, value]);
@@ -1094,6 +1141,9 @@ export const tmuxBackend: MuxBackend = Object.freeze({
     sendKeys(tmuxPaneTarget(pane), keys, opts),
   setPaneOption: async (pane: ActionPaneRef, name: string, value: string) =>
     setPaneOption(tmuxPaneTarget(pane), name, value),
+  readCrewTags,
+  writeCrewTags: async (pane: ActionPaneRef, tags: CrewIdentity) =>
+    setPaneOptions(tmuxPaneTarget(pane), crewPaneOptions(tags)),
 
   attachCommands: async (target: AttachTarget) => {
     if (target.pane !== undefined) return attachCommands({ ...target, pane: target.pane });

@@ -69,6 +69,7 @@ import { wireCloseCommand } from "./agent-close.js";
 import { wireCollectCommand } from "./agent-collect.js";
 import { wireModelCommand } from "./agent-model.js";
 import { wireReattachCommand } from "./agent-reattach.js";
+import { wireRetagCommand } from "./agent-retag.js";
 import { cmdSend } from "./agent-send.js";
 import { setNextOutcome } from "./handle.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
@@ -142,6 +143,12 @@ function assertModelFlag(opts: SpawnOpts): void {
   if (harnessOfCli(cli, command) === undefined) {
     throw new UsageError(say("agent.spawn_model_unknown_cli", cli));
   }
+}
+
+/** A spawn warning: into the --json document's `warnings`, else one stderr line. */
+function pushWarning(warnings: string[], line: string, json: boolean | undefined): void {
+  warnings.push(line);
+  if (!json) console.error(pc.yellow(`warning: ${line}`));
 }
 
 export async function cmdSpawn(
@@ -272,16 +279,15 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
       remoteLoopHost(agent),
       agent.ctlPane,
     );
-    warnings.push(warn.message);
-    if (!opts.json) console.error(pc.yellow(`warning: ${warn.message}`));
+    pushWarning(warnings, warn.message, opts.json);
   }
+  if (agent.tagWarning !== undefined) pushWarning(warnings, agent.tagWarning, opts.json);
   // Claude parks at a trust dialog whose default is "No, exit": the Enter
   // that ends a send would quit it. Keep the pane, skip the send, say why.
   const trustSkip = agent.trustDialog === true && sendText !== undefined;
   if (agent.trustDialog === true) {
     const trustWarning = say("agent.spawn_trust_warning", name, trustSkip);
-    warnings.push(trustWarning);
-    if (!opts.json) console.error(pc.yellow(`warning: ${trustWarning}`));
+    pushWarning(warnings, trustWarning, opts.json);
   }
   const sent: SpawnSend | undefined = trustSkip
     ? {
@@ -316,10 +322,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
       { name, workstreamName: workstream },
       { transport: sent.transport, runs: sent.runs, incarnation: sent.incarnation },
     );
-    if (armed.warning !== undefined) {
-      warnings.push(armed.warning);
-      if (!opts.json) console.error(pc.yellow(`warning: ${armed.warning}`));
-    }
+    if (armed.warning !== undefined) pushWarning(warnings, armed.warning, opts.json);
   }
   // Resolve the actual command that landed in the pane, so the operator
   // can confirm `--command 'pi-meta --no-solo'` (etc.) took effect.
@@ -500,6 +503,7 @@ async function cmdSpawnTask(
   // or the name now belongs to a replacement) arms nothing: never a replacement under an
   // old receipt. A delivery-UNKNOWN attempt arms its task only (the prompt may be running).
   const warnings: string[] = [];
+  if (rec.warning !== null) pushWarning(warnings, rec.warning, opts.json);
   if (out.stale === undefined && rec.state !== "reserved" && rec.state !== "pane") {
     const armed =
       out.state === "sent" && out.agent !== undefined
@@ -516,10 +520,7 @@ async function cmdSpawnTask(
         : armSend(db, { name: agentName, workstreamName: workstream }, { transport: "ctl" }, [
             taskRef(workstream, task),
           ]);
-    if (armed.warning !== undefined) {
-      warnings.push(armed.warning);
-      if (!opts.json) console.error(pc.yellow(`warning: ${armed.warning}`));
-    }
+    if (armed.warning !== undefined) pushWarning(warnings, armed.warning, opts.json);
   }
   if (out.state === "sent" && rec.runs !== null && out.stale === undefined) {
     setNextOutcome({
@@ -1384,6 +1385,7 @@ export function wireAgentCommands(program: Command): void {
   wireCollectCommand(agent);
   wireAnswerCommand(agent);
   wireModelCommand(agent);
+  wireRetagCommand(agent);
   wireReattachCommand(agent);
 
   // `mu agent abort` — stop a pi agent's turn through its control socket.

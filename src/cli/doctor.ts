@@ -12,6 +12,7 @@
 // race in-flight spawns; see PENDING_PANE_PREFIX).
 
 import { dirname } from "node:path";
+import { type CrewTagsReport, crewTagsDoctorCheck } from "../agents/crew-tags.js";
 import { listAgents, listLiveAgents } from "../agents.js";
 import { captureDoctorCheck } from "../capture.js";
 import { emitJson, injectedWorkstream } from "../cli.js";
@@ -126,6 +127,19 @@ async function muxHealth(): Promise<MuxHealth | undefined> {
   }
 }
 
+/** The crew-tags row (src/agents/crew-tags.ts); no backend resolves: nothing to read. */
+async function crewTagsReport(db: Db): Promise<CrewTagsReport> {
+  try {
+    return await crewTagsDoctorCheck(db, await activeMux());
+  } catch {
+    return {
+      check: { name: "crew-tags", status: "ok", detail: "no multiplexer" },
+      problems: [],
+      lines: [],
+    };
+  }
+}
+
 /** No multiplexer works here (none detected, or the forced one does not
  *  answer): doctor prints its whole report first, then fails with the
  *  one-line install advice, exit 5. A binary with no client attached is
@@ -186,6 +200,9 @@ export async function cmdDoctor(
   printCheck("agent state", agentStateCheck(health, extensionLive(ctlSockets.agents)));
   printCheck("mu ext", muExt);
   printCheck("ctl", ctlSockets.check);
+  const crewTags = await crewTagsReport(db);
+  printCheck("crew tags", crewTags.check);
+  for (const line of crewTags.lines) console.log(`      ${pc.yellow(line)}`);
 
   // ─ DB + schema
   console.log(pc.bold("\ndb"));
@@ -557,6 +574,7 @@ export async function cmdDoctorJson(
   const health = await muxHealth();
   const ctlSockets = await ctlSocketsDoctorCheck(listAgents(db), { stateDir: dirname(db.name) });
   const muExt = ctlExtensionDoctorCheck(ctlSockets.agents);
+  const crewTags = await crewTagsReport(db);
   const env = {
     // `mux` is the backend-agnostic key. `tmux` is kept as an alias for
     // back-compat with scripts that grew around the pre-MuxBackend
@@ -566,6 +584,7 @@ export async function cmdDoctorJson(
     ...Object.fromEntries(health?.env.map((f) => [f.name.replace(/^\$/, ""), f.value]) ?? []),
     agentState: agentStateCheck(health, extensionLive(ctlSockets.agents)),
     ctl: { extension: muExt, sockets: ctlSockets.check, agents: ctlSockets.agents },
+    crewTags: { ...crewTags.check, warnings: crewTags.lines },
   };
 
   // db / schema

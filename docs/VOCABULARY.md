@@ -19,6 +19,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **multiplexer** / **mux** | The terminal program that owns panes: **tmux** or **Rex** (herdr is a **retired backend**). "mux" in code (`src/mux/`, `MU_MUX`), "multiplexer" in prose; one is active per invocation. | "terminal", "emulator", "backend" (alone) |
 | **mux backend** | An implementation of `MuxBackend` (`src/mux/tmux.ts`, `src/mux/rex.ts`). Owns everything backend-specific. | "driver", "provider", "adapter" |
 | **mux detection** | Picks the mux backend: `MU_MUX` → `$TMUX` → a Rex terminal (`$REX_SESSION`) → binary on `PATH` (tmux, then rex) → `NoMultiplexerError`. `MU_MUX=herdr` fails: retired. | "auto-detect", "probe" |
+| **crew tags** | The identity murmur reads off an agent's pane to show it as orchestrated, not human: on tmux the pane options `@mu_agent`, `@mu_workstream`, `@mu_role` (set at spawn); on Rex the block label (the agent's name) and the session label (`mu-<ws>`). A spawn that fails to set them keeps the pane and warns; `mu doctor`'s `crew tags` row finds them, `mu agent retag` rewrites them (`src/agents/crew-tags.ts`). | "pane title", "labels" (alone) |
 | **mux session** | The container for one workstream's panes: tmux session `mu-<workstream>`, or Rex session labelled `mu-<workstream>`. | "mux workspace", "session" (alone) |
 | **tmux session** | The tmux flavour of a **mux session**. | "session" (alone) |
 | **window** | The grouping inside a mux session (tmux window, Rex window), named by **window name**. | "tab" (except the `--tab` flag) |

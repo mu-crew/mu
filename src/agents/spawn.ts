@@ -55,7 +55,12 @@ import { MULE_JOB_PREFIX_ENV, muleJobPrefix } from "../local-loop.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
 import { TmuxPaneBirthError } from "../mux/pane-ref.js";
-import { attachShellLine, type CommandSource, markPaneHost } from "../mux/types.js";
+import {
+  attachShellLine,
+  type CommandSource,
+  crewPaneOptions,
+  markPaneHost,
+} from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode } from "../output.js";
 import { remoteShellCommand } from "../remote-agent.js";
@@ -402,6 +407,8 @@ export type SpawnedAgent = AgentRow & {
   ctlPane?: CtlPane;
   /** Set when the startup scan saw a Claude trust dialog parked in the pane. */
   trustDialog?: true;
+  /** The pane's crew tags (`@mu_*`) could not be set: the warning line (`mu agent retag` fixes it). */
+  tagWarning?: string;
   /** An at-start plugin kind's first prompt, delivered by its job.start (plugins spec D8). */
   firstSend?: SendResult;
 };
@@ -585,6 +592,8 @@ async function spawnPreparedAgent(
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
   let phase: SpawnPhase = "worktree";
   let trustDialog = false;
+  // The pane's crew tags failed to set: the agent works, murmur shows it as human.
+  let tagWarning: string | undefined;
   // Settles when the backend has started the agent in its pane.
   let readiness: Promise<unknown> = Promise.resolve();
   let staged: StagedWorktree | undefined;
@@ -903,10 +912,13 @@ async function spawnPreparedAgent(
           cli,
           command: paneCommand,
           ...(profile ? {} : { cwd: paneCwd }),
-          paneOptions: {
-            "@mu_agent": opts.name,
-            "@mu_workstream": opts.workstream,
-            "@mu_role": opts.orchestrator === true ? "orchestrator" : "worker",
+          paneOptions: crewPaneOptions({
+            agent: opts.name,
+            workstream: opts.workstream,
+            role: opts.orchestrator === true ? "orchestrator" : "worker",
+          }),
+          onTagFailure: (w) => {
+            tagWarning = w;
           },
           env:
             muleProfile !== undefined && staged !== undefined
@@ -1115,6 +1127,7 @@ async function spawnPreparedAgent(
       ...(ctlIncarnation !== undefined ? { ctlIncarnation } : {}),
       ...(ctlPane !== undefined ? { ctlPane } : {}),
       ...(trustDialog ? { trustDialog: true as const } : {}),
+      ...(tagWarning !== undefined ? { tagWarning } : {}),
     };
   } catch (err) {
     // Record first: a throwing cleanup must neither skip the record nor

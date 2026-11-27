@@ -31,6 +31,8 @@ export const SPAWN_RECEIPTS_DDL = `
 -- 'ctl' (a receipt id), 'hooks' (a brief file and a pasted pointer, confirmed
 -- by run_count; incarnation/runs hold the session and its baseline), 'mux', or
 -- a plugin channel's name (plugins spec D5): no CHECK, the channel registry names it.
+-- warning: what the spawn could not do and the agent runs without (its pane's
+-- crew tags), beside the state; never cleared by a transition.
 CREATE TABLE IF NOT EXISTS spawn_receipts (
   task_id     INTEGER NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
   attempt_key TEXT NOT NULL,
@@ -46,6 +48,7 @@ CREATE TABLE IF NOT EXISTS spawn_receipts (
   state       TEXT NOT NULL
               CHECK (state IN (${SPAWN_RECEIPT_STATES.map((x) => `'${x}'`).join(", ")})),
   detail      TEXT,
+  warning     TEXT,
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL,
   PRIMARY KEY (task_id, attempt_key)

@@ -55,6 +55,37 @@ export interface EnsureSessionResult {
   repaired: boolean;
 }
 
+/**
+ * The crew identity murmur derives a pane's driver from: tmux reads the pane's
+ * `@mu_agent` / `@mu_workstream` / `@mu_role` options; Rex reads the block's label
+ * (the agent) and its session's label (`mu-<workstream>`). `role` is tmux only.
+ */
+export interface CrewIdentity {
+  agent: string;
+  workstream: string;
+  role?: string;
+}
+
+/** A pane's crew identity as read (`""` for unset). */
+export interface CrewTags extends CrewIdentity {
+  /** tmux: the server identity it was read on (pane ids restart per server). */
+  server?: string;
+  /** Rex: the session's raw label (the workstream is `""` when it is not `mu-<ws>`). */
+  sessionLabel?: string;
+}
+
+/** The crew roles `@mu_role` holds. */
+export const CREW_ROLES = ["worker", "orchestrator"] as const;
+
+/** The tmux pane options of a crew identity (a role defaults to `worker`). */
+export function crewPaneOptions(id: CrewIdentity): Record<string, string> {
+  return {
+    "@mu_agent": id.agent,
+    "@mu_workstream": id.workstream,
+    "@mu_role": id.role ?? "worker",
+  };
+}
+
 /** What `spawnAgent` needs. mu has already resolved the command it would run. */
 export interface SpawnAgentPaneOptions {
   /** Mux session (tmux session / Rex session), e.g. `mu-auth`. */
@@ -73,6 +104,9 @@ export interface SpawnAgentPaneOptions {
   cwd?: string;
   /** Pane-scoped user options (`@mu_agent`, ...) to set on the new pane. tmux only. */
   paneOptions?: Record<string, string>;
+  /** Called with a warning line when `paneOptions` could not be set: the pane lives on
+   *  untagged (murmur shows it as a human's pane until `mu agent retag`). tmux only. */
+  onTagFailure?: (warning: string) => void;
   /** Identity and state env for the pane (tmux `-e`). */
   env: Record<string, string>;
   /**
@@ -365,6 +399,14 @@ export interface MuxBackend {
   /** tmux only: set a user option (`@name`) on one pane, for a reader such
    *  as murmur that looks the pane up by id (MU_HOST_PANE_OPTION). */
   setPaneOption?(pane: ActionPaneRef, name: string, value: string): Promise<void>;
+  /** tmux and Rex: the crew identity of every live pane, keyed by pane id, in one
+   *  batched read (tmux: one `list-panes -a`; Rex: one block listing per session).
+   *  Empty when no server runs; throws when the read fails. */
+  readCrewTags?(): Promise<Map<string, CrewTags>>;
+  /** tmux and Rex: write the crew identity on one pane (tmux: the `@mu_*` options in one
+   *  guarded call; Rex: the block label). Throws on failure. A Rex session label is the
+   *  workstream's, never changed per pane. */
+  writeCrewTags?(pane: ActionPaneRef, tags: CrewIdentity): Promise<void>;
   /** The pane's runtime state as the mux itself reports it, or undefined
    *  when the pane is gone or unclassified. vtmux and Rex (the program's
    *  OSC 7501 report): for non-pi agents. */

@@ -32,6 +32,8 @@ import type { SessionKillTarget } from "./types.js";
 import {
   type AttachTarget,
   type CaptureOptions,
+  type CrewIdentity,
+  type CrewTags,
   type EnsureSessionResult,
   MU_PLACEHOLDER_WINDOW,
   type MuxBackend,
@@ -431,6 +433,46 @@ export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
   return paneId;
 }
 
+/** A session label murmur reads as a workstream: `mu-<ws>`. */
+const MU_SESSION_LABEL = /^mu-(.+)$/;
+
+/**
+ * Every block's crew identity, as murmur derives it: the agent is the block's label, the
+ * workstream its session's label past `mu-`. One `session.list`, then one block listing per
+ * session (never a call per block). A session that closed meanwhile has no blocks.
+ */
+export async function readCrewTags(): Promise<Map<string, CrewTags>> {
+  const list = await api("session.list", {});
+  const sessions = required(list, "sessions", "session.list").filter(isRecord);
+  const out = new Map<string, CrewTags>();
+  await Promise.all(
+    sessions.map(async (session) => {
+      const sessionId = asString(session.session_id);
+      if (sessionId === undefined) return;
+      const sessionLabel = asString(session.label) ?? "";
+      const workstream = MU_SESSION_LABEL.exec(sessionLabel)?.[1] ?? "";
+      const listed = await apiUnlessGone("session.list_blocks", { session_id: sessionId });
+      if (listed === undefined) return;
+      for (const b of required(listed, "blocks", "session.list_blocks").filter(isRecord)) {
+        const paneId = asString(b.block_id);
+        if (paneId === undefined) continue;
+        out.set(paneId, { agent: asString(b.label) ?? "", workstream, sessionLabel });
+      }
+    }),
+  );
+  return out;
+}
+
+/** Label the agent's block with its name (`session.set_block_label`). The session's label is not touched. */
+export async function writeCrewTags(paneId: string, tags: CrewIdentity): Promise<void> {
+  const sessionId = await requireBlockSession(paneId, "session.set_block_label");
+  await api("session.set_block_label", {
+    session_id: sessionId,
+    block_id: paneId,
+    label: tags.agent,
+  });
+}
+
 /** The foreground program's name: `argv0` (pi runs as node but reports `pi`), else its name. */
 function foregroundCommand(process: Record<string, unknown> | undefined): string {
   const fg = process?.foreground;
@@ -743,6 +785,9 @@ export const rexBackend: MuxBackend = Object.freeze({
   killPane: async (pane: ActionPaneRef) => killPane(nativePaneId(pane)),
   killPaneCommand: (pane: ActionPaneRef) => killPaneCommand(nativePaneId(pane)),
   capture: async (pane: ActionPaneRef, opts?: CaptureOptions) => capture(nativePaneId(pane), opts),
+  readCrewTags,
+  writeCrewTags: async (pane: ActionPaneRef, tags: CrewIdentity) =>
+    writeCrewTags(nativePaneId(pane), tags),
 
   attachCommands,
 

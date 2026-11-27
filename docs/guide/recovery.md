@@ -104,6 +104,15 @@ Decide which side is right, then report the drift as a bug with the
 named field. `mu rebuild` never writes in place. It prints the swap
 command.
 
+## murmur shows a crew agent as human
+
+murmur knows a pane is an agent's by its crew tags (tmux `@mu_*` pane
+options, Rex block and session labels). A spawn that could not set them
+warns once; `mu doctor`'s `crew tags` row lists every live agent still
+missing them. `mu agent retag [-w <ws>] [name...]` writes them again and
+leaves correct panes alone. A Rex session not labelled `mu-<ws>` is
+reported `partial`: rename the session in Rex.
+
 ## The `disk` section of `mu doctor` warns
 
 | Row | Means |

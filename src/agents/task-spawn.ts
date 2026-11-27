@@ -645,6 +645,10 @@ async function drive(
       agent = spawned;
       spawnThrew = false;
       firstSent = spawned.firstSend;
+      // The pane runs without its crew tags: the receipt keeps the warning (`mu agent retag`).
+      if (spawned.tagWarning !== undefined) {
+        rec = transitionReceipt(db, taskId, key, "note", { warning: spawned.tagWarning });
+      }
       // The pi this spawn's handshake saw: every send below is bound to it.
       if (spawned.ctlIncarnation !== undefined) {
         rec = transitionReceipt(db, taskId, key, "note", { incarnation: spawned.ctlIncarnation });
