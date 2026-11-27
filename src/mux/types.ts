@@ -58,7 +58,8 @@ export interface EnsureSessionResult {
 /**
  * The crew identity murmur derives a pane's driver from: tmux reads the pane's
  * `@mu_agent` / `@mu_workstream` / `@mu_role` options; Rex reads the block's label
- * (the agent) and its session's label (`mu-<workstream>`). `role` is tmux only.
+ * (the agent) and its session's label (`mu-<workstream>`). `role` is a tmux pane
+ * option; on Rex the pane's pi reports it as the OSC 7501 `mu/role` record.
  */
 export interface CrewIdentity {
   agent: string;

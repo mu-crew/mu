@@ -46,6 +46,7 @@ import {
   type MuRunner,
   registerDelegate,
 } from "./delegate.js";
+import { claimPaneRole, clearPaneRole } from "./delegate-osc.js";
 import { claimPendingPaneOption } from "./delegate-pane-option.js";
 import {
   type MuNudgeApi,
@@ -446,6 +447,10 @@ export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void
   // Identity follows the bind: a pi that finds MU_CTL_SOCK served by
   // another pi is nested and gets none of the agent's nudges.
   const nested = serveCtl(pi);
+  // Every shutdown clears the Rex role record; the next session_start re-reports it.
+  pi.on("session_shutdown", () => {
+    clearPaneRole();
+  });
   // The settle wait and the close nudge run in parallel, as one handler.
   // A delegate wake on its way starts a turn whose settle waits; an open
   // dialog means nobody is driving. Either holds the nudges. The settle wait
@@ -468,6 +473,12 @@ function headless(c: { hasUI?: boolean; mode?: string } | undefined): boolean {
   return c?.hasUI === false || (c?.mode !== undefined && c.mode !== "tui");
 }
 
+/** The pane's own pi claims its tmux `@mu_pending` and reports its Rex `mu/role`. */
+function claimPane(owner: boolean): void {
+  void claimPendingPaneOption(owner);
+  claimPaneRole(owner);
+}
+
 /**
  * Child side: serve `$MU_CTL_SOCK` for the mu that spawned this pi.
  * Returns whether this pi is nested (another pi serves the socket), read
@@ -480,7 +491,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     // No control socket: a pi started outside mu owns its pane's `@mu_pending`,
     // unless it has no UI (a nested `pi -p` in a human's pi pane).
     pi.on("session_start", async (_e, c) => {
-      void claimPendingPaneOption(!headless(c));
+      claimPane(!headless(c));
     });
     return () => false;
   }
@@ -1044,7 +1055,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     if (s) {
       // A new/resumed session keeps the same socket, while the path is ours.
       if (g.ino !== undefined && inodeOf(sockPath) === g.ino) {
-        void claimPendingPaneOption(!headless(c));
+        claimPane(!headless(c));
         return;
       }
       // Orphaned: the file was deleted or replaced under a live server.
@@ -1056,7 +1067,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     await bind();
     // `@mu_pending` follows the socket: the pi serving it owns the pane; a
     // nested pi (`pi -p` here) leaves the parent's count alone.
-    void claimPendingPaneOption(g.nested !== true && !headless(c));
+    claimPane(g.nested !== true && !headless(c));
   });
 
   pi.on("session_shutdown", async (e) => {

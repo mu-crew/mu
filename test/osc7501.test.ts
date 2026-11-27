@@ -3,8 +3,13 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  claimPaneRole,
+  clearPaneRole,
   delegatesOsc,
   emitDelegatesStatus,
+  paneRole,
+  resetPaneRoleForTests,
+  roleOsc,
   setTtyWriterForTests,
 } from "../extension/delegate-osc.js";
 import { resetAgentStateCacheForTests } from "../src/agent-state.js";
@@ -305,5 +310,42 @@ describe("delegates waiting record", () => {
     setTtyWriterForTests((d) => seen.push(d));
     emitDelegatesStatus(1);
     expect(seen).toEqual([delegatesOsc(1)]);
+  });
+});
+
+describe("mu/role sub-record (Rex only)", () => {
+  const rex = { TERM_PROGRAM: "rex", REX_SESSION: "s1", MU_MANAGED_AGENT: "1", MU_AGENT_NAME: "w" };
+  afterEach(() => resetPaneRoleForTests());
+
+  it("reports idle under mu/role with the role as base64 title; clear removes it", () => {
+    expect(roleOsc("orchestrator")).toBe(
+      `\x1b]7501;state=idle:id=mu/role:title=${Buffer.from("orchestrator").toString("base64")}\x1b\\`,
+    );
+    expect(roleOsc(undefined)).toBe("\x1b]7501;state=clear:id=mu/role\x1b\\");
+  });
+
+  it("reads the role only in a Rex terminal, for a mu-placed agent", () => {
+    expect(paneRole(rex)).toBe("worker");
+    expect(paneRole({ ...rex, MU_ORCHESTRATOR: "1" })).toBe("orchestrator");
+    expect(paneRole({ ...rex, MU_ORCHESTRATOR: "" })).toBe("worker");
+    // tmux carries @mu_role; tmux inside Rex sets its own TERM_PROGRAM.
+    expect(paneRole({ ...rex, TERM_PROGRAM: "tmux" })).toBeUndefined();
+    expect(paneRole({ ...rex, REX_SESSION: "" })).toBeUndefined();
+    expect(paneRole({ ...rex, MU_MANAGED_AGENT: "" })).toBeUndefined();
+    expect(paneRole({ ...rex, MU_AGENT_NAME: "" })).toBeUndefined();
+  });
+
+  it("only the owner writes it, and shutdown clears only what this process wrote", () => {
+    const seen: string[] = [];
+    setTtyWriterForTests((d) => seen.push(d));
+    claimPaneRole(false, rex);
+    clearPaneRole();
+    claimPaneRole(true, { ...rex, TERM_PROGRAM: "tmux" });
+    clearPaneRole();
+    expect(seen).toEqual([]);
+    claimPaneRole(true, rex);
+    clearPaneRole();
+    clearPaneRole();
+    expect(seen).toEqual([roleOsc("worker"), roleOsc(undefined)]);
   });
 });

@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MuRunner } from "../extension/delegate.js";
+import { resetPaneRoleForTests, roleOsc, setTtyWriterForTests } from "../extension/delegate-osc.js";
 import {
   clearPendingPaneOption,
   reportPendingPaneOption,
@@ -860,6 +861,48 @@ describe("mu pi extension", () => {
         expect(seen).toEqual([]);
       } finally {
         setPaneOptionRunnerForTests(async () => undefined);
+        for (const key of keys) delete process.env[key];
+      }
+    });
+
+    it("mu/role: on Rex the pi serving the socket reports its role; a nested pi never does", async () => {
+      const keys = ["TERM_PROGRAM", "REX_SESSION", "MU_ORCHESTRATOR"] as const;
+      process.env.TERM_PROGRAM = "rex";
+      process.env.REX_SESSION = "s1";
+      process.env.MU_ORCHESTRATOR = "1";
+      const written: string[] = [];
+      try {
+        setTtyWriterForTests((d) => written.push(d));
+        await fake.emit("session_start");
+        expect(written).toEqual([roleOsc("orchestrator")]);
+        // A nested pi in the same pane (its own process: fresh module state).
+        resetPaneRoleForTests();
+        written.splice(0);
+        const nested = otherPi();
+        await nested.emit("session_start");
+        await nested.emit("session_shutdown", { reason: "quit" });
+        expect(written).toEqual([]);
+      } finally {
+        setTtyWriterForTests(() => {});
+        resetPaneRoleForTests();
+        for (const key of keys) delete process.env[key];
+      }
+    });
+
+    it("mu/role: the owner clears it on shutdown and reports it again on the next session", async () => {
+      const keys = ["TERM_PROGRAM", "REX_SESSION"] as const;
+      process.env.TERM_PROGRAM = "rex";
+      process.env.REX_SESSION = "s1";
+      const written: string[] = [];
+      try {
+        setTtyWriterForTests((d) => written.push(d));
+        await fake.emit("session_start");
+        await fake.emit("session_shutdown", { reason: "new" });
+        await fake.emit("session_start", { reason: "new" });
+        expect(written).toEqual([roleOsc("worker"), roleOsc(undefined), roleOsc("worker")]);
+      } finally {
+        setTtyWriterForTests(() => {});
+        resetPaneRoleForTests();
         for (const key of keys) delete process.env[key];
       }
     });
