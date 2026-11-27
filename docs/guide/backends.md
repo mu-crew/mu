@@ -35,10 +35,11 @@ restarts, so murmur trusts `#{@mu_pending}` only while the pane reports OSC
 Rex has no per-block options, so `@mu_role` has no Rex equivalent there. In
 a Rex terminal (`$REX_SESSION` and `TERM_PROGRAM=rex`) the pane's own pi
 instead reports an OSC 7501 `idle` record under id `mu/role` whose base64
-`title` is `orchestrator` (`MU_ORCHESTRATOR=1`) or `worker`, for an agent mu
+`title` is `delegate` (`MU_DELEGATE=1`, checked first), `orchestrator`
+(`MU_ORCHESTRATOR=1`) or `worker`, for an agent mu
 placed (`MU_MANAGED_AGENT`, `MU_AGENT_NAME`). It clears the record on every
-shutdown and reports it again at the next session start. A crashed pi leaves
-it behind, which is when murmur needs the role. Same owner rule as
+shutdown and reports it again at the next session start. murmur records the
+role while the pi lives, so it still knows it when the pi crashes. Same owner rule as
 `@mu_pending`; a nested or headless pi never writes it.
 
 ## See which backend is active

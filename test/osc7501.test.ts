@@ -328,6 +328,9 @@ describe("mu/role sub-record (Rex only)", () => {
     expect(paneRole(rex)).toBe("worker");
     expect(paneRole({ ...rex, MU_ORCHESTRATOR: "1" })).toBe("orchestrator");
     expect(paneRole({ ...rex, MU_ORCHESTRATOR: "" })).toBe("worker");
+    // As resolveActorRole: MU_DELEGATE wins over MU_ORCHESTRATOR.
+    expect(paneRole({ ...rex, MU_DELEGATE: "1" })).toBe("delegate");
+    expect(paneRole({ ...rex, MU_DELEGATE: "1", MU_ORCHESTRATOR: "1" })).toBe("delegate");
     // tmux carries @mu_role; tmux inside Rex sets its own TERM_PROGRAM.
     expect(paneRole({ ...rex, TERM_PROGRAM: "tmux" })).toBeUndefined();
     expect(paneRole({ ...rex, REX_SESSION: "" })).toBeUndefined();

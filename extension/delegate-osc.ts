@@ -95,7 +95,7 @@ export function emitDelegatesStatus(count: number): void {
 
 export const ROLE_OSC_ID = "mu/role";
 
-export type PaneRole = "orchestrator" | "worker";
+export type PaneRole = "orchestrator" | "worker" | "delegate";
 
 /** The OSC 7501 bytes reporting `role` (`clear` for undefined). */
 export function roleOsc(role: PaneRole | undefined): string {
@@ -108,11 +108,14 @@ export function roleOsc(role: PaneRole | undefined): string {
  * The role a mu-placed pi reports, or undefined: not in a Rex terminal
  * (`$REX_SESSION` and `TERM_PROGRAM=rex`, as mu's Rex detection; tmux has
  * `@mu_role`), or not placed by mu (`MU_MANAGED_AGENT` and `MU_AGENT_NAME`).
- * `MU_ORCHESTRATOR=1` is the orchestrator mark spawn sets; anything else is a worker.
+ * Derived as mu's `actor_role` (`resolveActorRole`): `MU_DELEGATE=1` is a
+ * delegate (checked first), `MU_ORCHESTRATOR=1` the orchestrator, anything
+ * else a worker.
  */
 export function paneRole(env: NodeJS.ProcessEnv = process.env): PaneRole | undefined {
   if (env.TERM_PROGRAM !== "rex" || !env.REX_SESSION) return undefined;
   if (env.MU_MANAGED_AGENT !== "1" || !env.MU_AGENT_NAME) return undefined;
+  if (env.MU_DELEGATE === "1") return "delegate";
   return env.MU_ORCHESTRATOR === "1" ? "orchestrator" : "worker";
 }
 

@@ -907,6 +907,66 @@ describe("mu pi extension", () => {
       }
     });
 
+    it("mu/role: re-reported after a reload across a recreated runtime", async () => {
+      const keys = ["TERM_PROGRAM", "REX_SESSION"] as const;
+      process.env.TERM_PROGRAM = "rex";
+      process.env.REX_SESSION = "s1";
+      const written: string[] = [];
+      try {
+        setTtyWriterForTests((d) => written.push(d));
+        await fake.emit("session_start");
+        await fake.emit("session_shutdown", { reason: "reload" });
+        const next = fakePi();
+        muPi(next.pi);
+        await next.emit("session_start", { reason: "reload" });
+        expect(written).toEqual([roleOsc("worker"), roleOsc(undefined), roleOsc("worker")]);
+        await next.emit("session_shutdown", { reason: "quit" });
+      } finally {
+        setTtyWriterForTests(() => {});
+        resetPaneRoleForTests();
+        for (const key of keys) delete process.env[key];
+      }
+    });
+
+    it("mu/role: a pi with no UI (`pi -p`, json, rpc) never writes it, owner or not", async () => {
+      const keys = ["TERM_PROGRAM", "REX_SESSION"] as const;
+      process.env.TERM_PROGRAM = "rex";
+      process.env.REX_SESSION = "s1";
+      const written: string[] = [];
+      try {
+        setTtyWriterForTests((d) => written.push(d));
+        const modes = [
+          { hasUI: false, mode: "print" },
+          { hasUI: false, mode: "json" },
+          { hasUI: true, mode: "rpc" },
+        ];
+        // The pi serving the socket: its first bind and each session after.
+        for (const ui of modes) {
+          Object.assign(fake.ctx, ui);
+          await fake.emit("session_start", { reason: "new" });
+          await fake.emit("session_shutdown", { reason: "new" });
+          expect(written, `owner ${ui.mode}`).toEqual([]);
+        }
+        // A pi with no MU_CTL_SOCK (its own process: fresh module state).
+        const key = "MU_CTL_SOCK";
+        delete process.env[key];
+        for (const ui of modes) {
+          resetPaneRoleForTests();
+          const p = fakePi();
+          muPi(p.pi);
+          Object.assign(p.ctx, ui);
+          await p.emit("session_start");
+          await p.emit("session_shutdown", { reason: "quit" });
+          expect(written, `no socket ${ui.mode}`).toEqual([]);
+        }
+      } finally {
+        setTtyWriterForTests(() => {});
+        resetPaneRoleForTests();
+        for (const key of keys) delete process.env[key];
+        process.env.MU_CTL_SOCK = sock;
+      }
+    });
+
     it("@mu_pending: in an unmanaged pane, a pi with no UI (`pi -p`, json, rpc) never writes it", async () => {
       const keys = ["TMUX", "TMUX_PANE", "TERM_PROGRAM", "MU_CTL_SOCK"] as const;
       for (const key of keys) delete process.env[key];
