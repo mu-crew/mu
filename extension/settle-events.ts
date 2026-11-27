@@ -246,7 +246,11 @@ export async function settleBody(
       );
       break;
     }
-    if (d2.interrupted === true || d2.drained === true) break;
+    if (d2.drained === true) {
+      last = undefined; // nothing owed: the first result's owed count is stale
+      break;
+    }
+    if (d2.interrupted === true) break;
     for (const x of noticesOf(d2)) notices.add(x);
     picture = pictureOf(d2);
     last = d2;
@@ -284,7 +288,7 @@ export async function settleBody(
         [
           `Another event came before the rest of ${waveWords}:`,
           ...(others.length > 1 ? others.map((e) => eventLine(e, snaps)) : []),
-          JSON.stringify(d2),
+          JSON.stringify(consumedView(d2, got)),
         ].join("\n"),
       );
       for (const oc of otherCalls) after.push(await answerBlock(io.mu, oc, REPORT_CAP));

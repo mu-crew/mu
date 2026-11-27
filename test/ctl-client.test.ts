@@ -199,6 +199,34 @@ describe("ctlRequest", () => {
     expect(got).toEqual({ op: "send", text: "hi", mode: "steer" });
   });
 
+  it("removes its abort listener once the request settles", async () => {
+    const p = await serve((_l, sock) => sock.end(encode({ v: 1, ok: true })));
+    const ac = new AbortController();
+    const add = vi.spyOn(ac.signal, "addEventListener");
+    const remove = vi.spyOn(ac.signal, "removeEventListener");
+    await ctlRequest(p, { op: "status" }, { signal: ac.signal });
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[0]?.[1]);
+  });
+
+  it("never connects when the signal is already aborted", async () => {
+    let connections = 0;
+    const path = join(dir, "a.sock");
+    const server = createServer((s) => {
+      connections++;
+      s.destroy();
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(path, () => r()));
+    const ac = new AbortController();
+    ac.abort();
+    await expect(ctlRequest(path, { op: "status" }, { signal: ac.signal })).rejects.toThrow(
+      /aborted/,
+    );
+    await new Promise((r) => setTimeout(r, 30));
+    expect(connections).toBe(0);
+  });
+
   it("returns an ok:false reply as-is", async () => {
     const p = await serve((_l, sock) => sock.end(encode({ v: 1, ok: false, error: "boom" })));
     expect(await ctlRequest(p, { op: "abort" })).toEqual({ v: 1, ok: false, error: "boom" });

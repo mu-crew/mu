@@ -140,6 +140,12 @@ export function ctlRequest(
 ): Promise<CtlReply> {
   const timeoutMs = clientTimeout(req, opts?.timeoutMs);
   return new Promise((resolve, reject) => {
+    const signal = opts?.signal;
+    // Already aborted: nothing was written, so this is a plain abort; never connect.
+    if (signal?.aborted) {
+      reject(new Error("control socket request aborted"));
+      return;
+    }
     const conn = createConnection(sock);
     // Set when conn.write is called. A write callback is not a delivery ack, so never cleared.
     let written = false;
@@ -151,6 +157,7 @@ export function ctlRequest(
       if (done) return;
       done = true;
       if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       conn.destroy();
       if (err) reject(err);
       else if (reply) resolve(reply);
@@ -159,13 +166,10 @@ export function ctlRequest(
       timeoutMs === undefined
         ? undefined
         : setTimeout(() => finish(ambiguous(new CtlTimeoutError(timeoutMs))), timeoutMs);
-    const signal = opts?.signal;
-    if (signal?.aborted) finish(ambiguous(new Error("control socket request aborted")));
-    signal?.addEventListener(
-      "abort",
-      () => finish(ambiguous(new Error("control socket request aborted"))),
-      { once: true },
-    );
+    function onAbort(): void {
+      finish(ambiguous(new Error("control socket request aborted")));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
     conn.setEncoding("utf8");
     conn.on("connect", () => {
       if (done) return;

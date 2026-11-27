@@ -233,6 +233,51 @@ describe("superseded results (D2)", () => {
 });
 
 describe("the union wave loop", () => {
+  it("a drained loop result ends the loop with no owed line from the first result", async () => {
+    const first = {
+      firing: { kind: "delegate", ref: "delegate:a1" },
+      exit: 0,
+      snapshots: [
+        { kind: "delegate", ref: "delegate:a1" },
+        { kind: "delegate", ref: "delegate:a2", owed: true },
+      ],
+      owed: 1,
+    };
+    const rows = [row("a1", "W"), { ...row("a2", "W"), state: "running" }];
+    const h = harness([okWait(first), okWait({ drained: true, owed: 0 })], rows);
+    const text = await h.text();
+    expect(h.waitArgs).toHaveLength(2);
+    expect(text).not.toContain("more ready, not yet delivered");
+  });
+
+  it("another event in a partly superseded loop result: the printed result is the consumed view", async () => {
+    const first = {
+      firing: { kind: "delegate", ref: "delegate:a1" },
+      exit: 0,
+      snapshots: ["a1", "a2"].map((id) => ({ kind: "delegate", ref: `delegate:${id}` })),
+    };
+    const loop = {
+      firing: { kind: "delegate", ref: "delegate:a2" },
+      events: [
+        { kind: "delegate", ref: "delegate:a2" },
+        { kind: "closed", ref: "task:w/t" },
+      ],
+      superseded: true,
+      eventConsumed: false,
+      snapshots: [
+        { kind: "delegate", ref: "delegate:a2", owed: true },
+        closeSnap("t", { delivered: true }),
+      ],
+      owed: 1,
+    };
+    const h = harness([okWait(first), okWait(loop)], [row("a1", "W"), row("a2", "W")]);
+    const text = await h.text();
+    const json = text.split("Another event came before the rest of wave W:\n")[1]?.split("\n")[0];
+    const shown = JSON.parse(json ?? "") as { firing?: unknown; events?: unknown };
+    expect(shown.firing).toBeUndefined();
+    expect(shown.events).toEqual([{ kind: "closed", ref: "task:w/t" }]);
+  });
+
   it("a loop result with another wave's answer and a close: siblings fold, the rest shown after", async () => {
     const first = {
       firing: { kind: "delegate", ref: "delegate:a1" },
