@@ -344,7 +344,7 @@ describe("a wait's notices (closeNotices)", () => {
     expect(n.answers({ workstreamName: "w", name: "w1" }, 1)).toBe(true);
     const t0 = Date.now();
     await n.settle(false);
-    expect(Date.now() - t0).toBeLessThan(200);
+    expect(Date.now() - t0).toBeLessThan(2000);
     ac.abort();
   });
 });

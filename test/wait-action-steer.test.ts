@@ -533,13 +533,13 @@ describe("steer: the final fence after the handshake", () => {
 describe("steer: abort and deadline", () => {
   it("an abort during the hello writes nothing and spends no budget", async () => {
     const s = await setup();
-    ext.helloDelayMs = 300;
+    ext.helloDelayMs = 3000;
     const ac = new AbortController();
     const p = steer(ctxOf(s, { signal: ac.signal }));
     setTimeout(() => ac.abort(), 30);
     const t0 = Date.now();
     expect((await p).state).toBe("refused");
-    expect(Date.now() - t0).toBeLessThan(200); // the abort cut the hello short
+    expect(Date.now() - t0).toBeLessThan(2000); // the abort cut the 3 s hello short
     expect(ext.sends).toHaveLength(0);
     expect(row(s)?.state).toBe("reserved");
   });

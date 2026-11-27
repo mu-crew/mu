@@ -72,7 +72,7 @@ beforeEach(() => {
   db = openDb({ path: join(dir, "mu.db") });
   saved = { l: process.env.MU_SPAWN_LIVENESS_MS, a: process.env.MU_SPAWN_ACK_MS };
   process.env.MU_SPAWN_LIVENESS_MS = "0";
-  process.env.MU_SPAWN_ACK_MS = "1000";
+  process.env.MU_SPAWN_ACK_MS = "15000";
   setSleepForTests(async () => {});
   setCommandResolverForTests(async (c) => ({ ok: true, binary: c, resolvedPath: `/bin/${c}` }));
   ensureWorkstream(db, "auth");

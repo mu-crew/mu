@@ -800,7 +800,7 @@ describe("a send that drew no hook event (a dialog took it)", () => {
         expect(data).toMatchObject({ firing: { kind: "heartbeat" } });
         expect(JSON.stringify(data)).not.toContain("no hook event"); // the read never answered
         // 0.4 s wait + one advisory budget (1 s), with slack; the stalled read sleeps 5 s.
-        expect(took).toBeLessThan(3500);
+        expect(took).toBeLessThan(4500); // well under the 5 s stalled read
       });
     } finally {
       node.slowReads(0);

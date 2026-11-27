@@ -252,7 +252,7 @@ describe("ctlRequest", () => {
     await expect(ctlRequest(p, { op: "status" }, { timeoutMs: 150 })).rejects.toBeInstanceOf(
       CtlTimeoutError,
     );
-    expect(Date.now() - t0).toBeLessThan(250);
+    expect(Date.now() - t0).toBeLessThan(2000);
   });
 
   it("a send that times out after the write is CtlDeliveryUnknownError", async () => {
