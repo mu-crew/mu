@@ -66,3 +66,22 @@ export function refoldStoredChecks(db: Db): number {
   for (const op of ops) if (applyOp(db, op).changed) changed += 1;
   return changed;
 }
+
+/**
+ * Re-fold every `task` op already in the log: a file that lacked a column
+ * (tasks.finding) holds rows a peer's op, synced by an older build, never
+ * set it on. Same shape as refoldStoredChecks; inside upgradeSchema's
+ * transaction, after the capture triggers, so nothing is captured again.
+ * Returns the number of ops that changed a row.
+ */
+export function refoldStoredTasks(db: Db): number {
+  const ops = db
+    .prepare(
+      `SELECT hlc, machine_id AS machineId, group_id AS groupId, actor, intent, entity, key, op, payload
+         FROM ops WHERE entity = 'task' ORDER BY hlc`,
+    )
+    .all() as Parameters<typeof applyOp>[1][];
+  let changed = 0;
+  for (const op of ops) if (applyOp(db, op).changed) changed += 1;
+  return changed;
+}

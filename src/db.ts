@@ -58,7 +58,7 @@ import {
   carrierJobsPreReservation,
   carrierJobsStopRequired,
 } from "./db-carrier.js";
-import { checksTableMissing, refoldStoredChecks } from "./db-checks.js";
+import { checksTableMissing, refoldStoredChecks, refoldStoredTasks } from "./db-checks.js";
 import { SPAWN_RECEIPTS_REBUILD, spawnReceiptsChecked } from "./db-receipts.js";
 import { LEGACY_RECOVERY_TRIGGERS, RECOVERY_TRIGGERS } from "./db-recovery.js";
 import {
@@ -550,6 +550,9 @@ export function upgradeSchema(db: Db, opts: { v13?: boolean } = {}): void {
     refuseUnusableStamps(version, storedCaptureVersion(db), v13 ? V13 : undefined);
     // An older v13 file holds `check` ops it recorded but never projected (spec D8).
     const refoldChecks = version !== null && checksTableMissing(db);
+    // A file whose tasks table lacks `finding` gets it with default 0: task ops it
+    // ingested from a peer's newer build must be folded again to set it.
+    const refoldTasks = version !== null && tasksLackFinding(db);
     if (version !== CURRENT_SCHEMA_VERSION || !schemaIsCurrent(db)) applySchemaDdl(db);
     // Stamp after the DDL, in the same transaction. A fresh DB gets its
     // row here; an older capture stamp is raised to this build.
@@ -561,6 +564,7 @@ export function upgradeSchema(db: Db, opts: { v13?: boolean } = {}): void {
     seedMachineIdentity(db);
     installCaptureLocked(db);
     if (refoldChecks) refoldStoredChecks(db);
+    if (refoldTasks) refoldStoredTasks(db);
     // Older delegate tokens count as delivered to the transcript (src/wait-cursor.ts).
     adoptSettleLane(db);
     db.exec("COMMIT");
@@ -573,6 +577,14 @@ export function upgradeSchema(db: Db, opts: { v13?: boolean } = {}): void {
     }
     throw err;
   }
+}
+
+/** An existing tasks table without the `finding` column (rev 8 and older). */
+function tasksLackFinding(db: Db): boolean {
+  const cols = db.prepare("SELECT name FROM pragma_table_info('tasks')").all() as {
+    name: string;
+  }[];
+  return cols.length > 0 && !cols.some((c) => c.name === "finding");
 }
 
 /** A v13 file from before host profiles stopped requiring a repo: `repo` is NOT NULL. */
