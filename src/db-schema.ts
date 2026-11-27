@@ -77,6 +77,10 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   ["wait_registrations", "baselines_json", "TEXT NOT NULL DEFAULT '{}'"],
   ["task_auto", "enabled", "INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))"],
   ...["request", "verdict", "agent"].map((c) => ["delegate_calls", c, "TEXT"] as const),
+  // The pane and registry incarnation the delegate spawned as: a re-adopting runtime closes that
+  // one only (extension/delegate.ts). NULL: not running yet, or a row older than the columns.
+  ["delegate_calls", "agent_pane", "TEXT"],
+  ["delegate_calls", "agent_incarnation", "INTEGER"],
   // The template's process group, recorded before it runs (hosts.ts).
   ["host_channels", "pgid", "INTEGER"],
   ["host_channels", "pgid_start", "TEXT"],
@@ -695,7 +699,8 @@ CREATE TABLE IF NOT EXISTS delegate_calls (
   error            TEXT,
   updated_at       TEXT NOT NULL,
   request          TEXT,  -- spawn request (JSON)
-  verdict          TEXT, agent TEXT  -- parsed label of a done answer; the agent that ran it
+  verdict          TEXT, agent TEXT,  -- parsed label of a done answer; the agent that ran it
+  agent_pane       TEXT, agent_incarnation INTEGER  -- the pane and registry id it spawned as
 );
 -- The dashboard's attention scan reads refused and recently failed calls each tick.
 CREATE INDEX IF NOT EXISTS idx_delegate_calls_state ON delegate_calls (state, updated_at);

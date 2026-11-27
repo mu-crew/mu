@@ -112,6 +112,10 @@ export function delegatesVerb(db: Db, args: readonly string[], stdin?: string): 
         return wrap({
           call: markDelegate(db, id, args[3] as "queued" | "starting" | "running" | "refused", {
             ...(flag(args, "--agent") ? { agent: flag(args, "--agent") as string } : {}),
+            ...(flag(args, "--pane") ? { agentPane: flag(args, "--pane") as string } : {}),
+            ...(flag(args, "--incarnation")
+              ? { agentIncarnation: Number(flag(args, "--incarnation")) }
+              : {}),
             ...(flag(args, "--error") ? { error: flag(args, "--error") as string } : {}),
           }),
         });

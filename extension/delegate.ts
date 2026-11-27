@@ -985,9 +985,11 @@ export function registerDelegate(
         tracked: async () => {
           freeSlot(); // now counted in inflight
           reportPending();
-          await calls.mark(call.callId, "running", { agent: name }).catch((e) => {
-            trace("mark.running.failed", { call: call.callId, error: errText(e) });
-          });
+          await calls
+            .mark(call.callId, "running", { agent: name, ...(identity ? { identity } : {}) })
+            .catch((e) => {
+              trace("mark.running.failed", { call: call.callId, error: errText(e) });
+            });
         },
       });
       const lines = [
@@ -1672,10 +1674,16 @@ export function registerDelegate(
       // The deadline runs from when it went `running` (the row's last update), not
       // from this reload, so a reload loop never extends it.
       const since = typeof row.updatedAt === "string" ? Date.parse(row.updatedAt) : Number.NaN;
+      // What it spawned as, recorded at running: its pane closes as the first runtime's would.
+      const identity =
+        typeof row.agentPane === "string" && Number.isSafeInteger(row.agentIncarnation)
+          ? { paneId: row.agentPane, incarnation: row.agentIncarnation as number }
+          : undefined;
       await watch(call, row.agent, 0, {
         keep: call.request.keep === true,
         timeoutS: call.request.timeoutS ?? DELEGATE_TIMEOUT_S,
         ...(Number.isFinite(since) ? { startedAt: since } : {}),
+        ...(identity ? { identity } : {}),
       });
     }
   });

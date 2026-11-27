@@ -142,12 +142,19 @@ export function callsApi(run: MuRunner) {
     async mark(
       callId: string,
       to: "queued" | "starting" | "running" | "refused",
-      extra: { agent?: string; error?: string } = {},
+      extra: {
+        agent?: string;
+        identity?: { paneId: string; incarnation: number };
+        error?: string;
+      } = {},
     ): Promise<void> {
       await call(run, "mark", [
         callId,
         to,
         ...(extra.agent ? ["--agent", extra.agent] : []),
+        ...(extra.identity
+          ? ["--pane", extra.identity.paneId, "--incarnation", String(extra.identity.incarnation)]
+          : []),
         ...(extra.error ? ["--error", extra.error] : []),
       ]);
     },

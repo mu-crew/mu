@@ -222,12 +222,14 @@ export async function cmdDelegatesMark(
   db: Db,
   callId: string,
   to: string,
-  opts: WsOpt & { agent?: string; error?: string },
+  opts: WsOpt & { agent?: string; pane?: string; incarnation?: number; error?: string },
 ): Promise<void> {
   if (to !== "queued" && to !== "starting" && to !== "running" && to !== "refused")
     throw new UsageError(`mark takes queued | starting | running | refused, got ${to}`);
   const call = markDelegate(db, callId, to, {
     ...(opts.agent !== undefined ? { agent: opts.agent } : {}),
+    ...(opts.pane !== undefined ? { agentPane: opts.pane } : {}),
+    ...(opts.incarnation !== undefined ? { agentIncarnation: opts.incarnation } : {}),
     ...(opts.error !== undefined ? { error: opts.error } : {}),
   });
   if (opts.json) return emitJson({ call });
@@ -475,11 +477,15 @@ export function wireDelegatesCommands(program: Command): void {
       "Admission step, as a compare-and-set, for the pi runtime that holds the queue: starting (from queued or refused), queued (from refused: only that runtime drains it), running (from starting), refused (from queued or starting)",
     )
     .option("--agent <name>", "the agent running it (with running)")
+    .option("--pane <id>", "the pane it spawned in (with running)")
+    .option("--incarnation <n>", "its registry id (with running)", parseNonNegativeInt)
     .option("--error <text>", "why (with refused)")
     .option(...JSON_OPT)
     .action(function (callId: string, state: string) {
       const opts = (this as Command).optsWithGlobals() as WsOpt & {
         agent?: string;
+        pane?: string;
+        incarnation?: number;
         error?: string;
       };
       return handle((db) => cmdDelegatesMark(db, callId, state, opts), this as Command)();

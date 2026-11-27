@@ -92,6 +92,9 @@ export interface DelegateRow {
   request: DelegateRequest;
   /** The agent that ran it, once running. */
   agent: string | null;
+  /** The pane and registry incarnation that agent spawned as, once running (its close is bound to them). */
+  agentPane: string | null;
+  agentIncarnation: number | null;
   /** The parsed verdict label of a done answer; null otherwise. */
   verdict: VerdictLabel | null;
   error: string | null;
@@ -139,6 +142,8 @@ interface RawCall {
   request: string | null;
   verdict: string | null;
   agent: string | null;
+  agent_pane: string | null;
+  agent_incarnation: number | null;
   local_id: string;
   workstream: string;
   wave: string | null;
@@ -169,6 +174,8 @@ function rowOf(r: RawCall): DelegateRow {
         : null,
     request,
     agent: r.agent,
+    agentPane: r.agent_pane ?? null,
+    agentIncarnation: r.agent_incarnation ?? null,
     verdict: (r.verdict as VerdictLabel | null) ?? null,
     error: r.error,
     updatedAt: r.updated_at,
@@ -397,7 +404,7 @@ export function markDelegate(
   db: Db,
   callId: string,
   to: "queued" | "starting" | "running" | "refused",
-  extra: { agent?: string; error?: string } = {},
+  extra: { agent?: string; agentPane?: string; agentIncarnation?: number; error?: string } = {},
 ): DelegateRow {
   const row = mustGet(db, callId);
   const from = MOVES[to] ?? [];
@@ -412,10 +419,22 @@ export function markDelegate(
             .prepare(
               `UPDATE delegate_calls
                 SET state = ?, updated_at = ?, agent = COALESCE(?, agent),
+                    agent_pane = COALESCE(?, agent_pane),
+                    agent_incarnation = COALESCE(?, agent_incarnation),
                     error = CASE WHEN ? = 'refused' THEN COALESCE(?, error) ELSE NULL END
               WHERE call_id = ? AND state = ?`,
             )
-            .run(to, now(), extra.agent ?? null, to, extra.error ?? null, callId, row.state);
+            .run(
+              to,
+              now(),
+              extra.agent ?? null,
+              extra.agentPane ?? null,
+              extra.agentIncarnation ?? null,
+              to,
+              extra.error ?? null,
+              callId,
+              row.state,
+            );
           if (r.changes !== 1) throw new DelegateStateError(callId, mustGet(db, callId).state, to);
           if (to === "starting")
             setTaskStatus(db, row.task, "OPEN", { workstream: row.workstream, substate: "todo" });

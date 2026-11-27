@@ -169,6 +169,31 @@ describe("the result outlives the echo", () => {
     expect(second.sendMessage).toHaveBeenCalledTimes(1); // the wake: the answer is not stranded
   });
 
+  it("a re-adopted call closes its pane on a clean answer, bound to the identity it spawned as", async () => {
+    const mu = fakeMu();
+    const ctx = { sessionManager: { getSessionId: () => "s1" } };
+    const first = fakePi();
+    registerDelegate(first.pi, mu.run);
+    await tool(first).execute("a", { task: "one", label: "a" }, undefined, undefined, ctx);
+    const spawnedAs = mu.registry.get("delegate-a");
+    expect(listDelegates(mu.db)[0]).toMatchObject({
+      agentPane: spawnedAs?.pane_id,
+      agentIncarnation: spawnedAs?.id,
+    });
+    for (const h of first.shutdown) await h({ reason: "reload" }, { hasUI: false });
+    mu.waits.delete("delegate-a");
+    const second = fakePi();
+    registerDelegate(second.pi, mu.run);
+    for (const h of second.handlers.get("session_start") ?? []) await h({ reason: "reload" }, ctx);
+    await settle();
+    mu.waits
+      .get("delegate-a")
+      ?.resolve(ok({ agents: [{ outcome: "done", lastText: answer("CONFIRMED") }] }));
+    await settle();
+    expect(mu.calls.some((c) => c[1] === "close" && c.includes("--if"))).toBe(true);
+    expect(mu.registry.has("delegate-a")).toBe(false); // the pane is closed, not leaked
+  });
+
   it("a re-adopted call keeps its deadline: the reloaded wait gets what is left of timeoutS, at least 1 s", async () => {
     const mu = fakeMu();
     const ctx = { sessionManager: { getSessionId: () => "s1" } };
