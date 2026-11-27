@@ -36,7 +36,7 @@ import { rmFixtureDir } from "./_fs.js";
 // This file pins openDb on fresh files: opt out of the template copy (test/_setup-db.ts).
 vi.unmock("../src/db.js");
 
-const PINNED_CHECKSUM = "3780356b2102a799f662cb831057642a3db7c134ea4ca527c0a9e02182d3b170";
+const PINNED_CHECKSUM = "791e0aab7a431e1e641439bfed42bc8e436543df0692b5fdcf7adb5f6790310a";
 
 let dir: string;
 let path: string;
@@ -593,7 +593,7 @@ describe("capture version stamp", () => {
   it("pins the generated DDL: changing a generator requires a CAPTURE_VERSION bump", () => {
     // If this fails you changed trigger SQL. Bump CAPTURE_VERSION in
     // src/capture.ts, then update the pin below.
-    expect(CAPTURE_VERSION).toBe(8);
+    expect(CAPTURE_VERSION).toBe(9);
     expect(GENERATED_TRIGGER_CHECKSUM).toBe(PINNED_CHECKSUM);
   });
 

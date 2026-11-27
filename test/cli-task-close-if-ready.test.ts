@@ -377,26 +377,26 @@ describe("mu task close --if-ready", () => {
     expect(umbrellaStatus()).toBe("CLOSED");
   });
 
-  it("a rejected work blocker refuses: accepted from triage, and created as work", async () => {
-    seedUmbrella([{ id: "a", triage: true }, { id: "b" }]).close();
+  it("a rejected work blocker refuses (created without --triage)", async () => {
+    seedUmbrella([{ id: "b" }]).close();
     const db = openDb({ path: dbPath });
-    acceptTask(db, "a", { workstream: "test" });
-    closeTask(db, "a", rej);
     closeTask(db, "b", rej);
     db.close();
     const r = await runCli(closeIfReady, dbPath);
     expect(r.exitCode).toBe(4);
-    expect(r.stderr).toContain("a, b");
+    expect(r.stderr).toContain("b");
     expect(umbrellaStatus()).toBe("OPEN");
   });
 
-  it("a triage task claimed (force) then rejected is work and refuses", async () => {
+  it("a finding accepted, claimed, then rejected stays a finding: decided", async () => {
     seedUmbrella([{ id: "a", triage: true }]).close();
     const db = openDb({ path: dbPath });
-    await claimTask(db, "a", { workstream: "test", force: true, self: true });
+    acceptTask(db, "a", { workstream: "test" });
+    await claimTask(db, "a", { workstream: "test", self: true });
     closeTask(db, "a", rej);
     db.close();
-    expect((await runCli(closeIfReady, dbPath)).exitCode).toBe(4);
+    expect((await runCli(closeIfReady, dbPath)).exitCode).toBeNull();
+    expect(umbrellaStatus()).toBe("CLOSED");
   });
 
   it("--json refusal is a JSON error envelope, exit 4", async () => {

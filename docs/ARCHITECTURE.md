@@ -111,7 +111,7 @@ are re-export hubs.
 | `src/provenance.ts` | `resolveProvenance(env)` (re-exported): the session and assistant-turn anchor stamped on every op; `resolveActorRole`: its orchestrator/worker capacity |
 | `src/provenance-env.ts` | `resolveProvenance(env)` itself, DB-free so the standalone pi extension can import it |
 | `src/op-context.ts` | `withOpContext` (intent, actor, group) and the `withCaptureSuppressed` echo guard; both own the transaction around the `op_ctx` row |
-| `src/fold.ts` | the one definition of a portable row: pure per-key folds of the ops log (horizon, per-field LWW including `kind` and `wave`, substate, notes, edges, checks) |
+| `src/fold.ts` | the one definition of a portable row: pure per-key folds of the ops log (horizon, per-field LWW including `kind`, `wave` and `finding`, substate, notes, edges, checks) |
 | `src/apply.ts` | apply one op: re-fold the keys it touches and make their rows equal the fold; `projectLog` folds every key |
 | `src/checks.ts`, `src/cli/tasks/checks.ts` | recorded checks (spec D5): `issueCheck` (a `checks` row with a fresh ULID from `newCheckId`, intent `check.issue`), `recordCheckVerdict` (needs a `VERDICT:` line; the last verdict wins, intent `check.verdict`), `listChecks`, `unansweredChecksOn` (`closeReadiness`'s check half); `mu task check` / `mu task verdict` |
 | `src/db-checks.ts` | DDL spliced into `CURRENT_SCHEMA`: the portable `checks` table (additive at schema 13); `refoldStoredChecks`, which `upgradeSchema` runs in its transaction when an older v13 file gains the table, so `check` ops recorded before it (a peer's, synced by an older build) are projected through `applyOp` |

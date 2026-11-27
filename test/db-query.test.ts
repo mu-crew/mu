@@ -670,7 +670,7 @@ describe("no such column", () => {
   it("names the column wanted, a near one, and the table's real columns, on one line", async () => {
     const err = await fail("SELECT titel FROM tasks");
     expect(err.message).toBe(
-      "no such column: titel (did you mean title?). columns: tasks(id, workstream_id, local_id, title, status, substate, impact, effort_days, scored, dispatch_host, kind, wave, owner_id, created_at, updated_at)",
+      "no such column: titel (did you mean title?). columns: tasks(id, workstream_id, local_id, title, status, substate, impact, effort_days, scored, dispatch_host, kind, wave, finding, owner_id, created_at, updated_at)",
     );
     expect(err.message).not.toContain("\n");
     expect(err.showHelp).toBe(false);

@@ -197,9 +197,11 @@ export class TaskHasOpenBlockersError extends Error {
 
 /**
  * Thrown by `closeTask` with `ifReady` when a direct blocker is
- * CLOSED/rejected: `--if-ready` is the stricter gate, so a refused piece
- * of work does not count as ready. wontfix, duplicate and superseded still
- * count ("stop waiting"); a plain close is unchanged.
+ * CLOSED/rejected and not a finding (`tasks.finding`, set by `task add
+ * --triage`): `--if-ready` is the stricter gate, so a refused piece of work
+ * does not count as ready. A rejected finding is a decided proposal and
+ * counts, as do wontfix, duplicate and superseded ("stop waiting"); a plain
+ * close is unchanged. A task created before the mark existed reads as work.
  */
 export class TaskRejectedBlockersError extends Error {
   override readonly name = "TaskRejectedBlockersError";

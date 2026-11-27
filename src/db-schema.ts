@@ -65,6 +65,8 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   // spawner/host/collected_head are machine-local agent metadata.
   ["tasks", "kind", TASK_KIND_DDL],
   ["tasks", "wave", "TEXT"],
+  // Origin mark: 1 = created with --triage (a finding). Portable; absent = work (0).
+  ["tasks", "finding", "INTEGER NOT NULL DEFAULT 0"],
   ["agents", "spawner", "TEXT"],
   ["agents", "host", "TEXT"],
   ["agents", "collected_head", "TEXT"],
@@ -624,6 +626,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   kind          TEXT NOT NULL DEFAULT 'work'    -- work | delegate | human (synced)
                 CHECK (kind IN (${sqlList(TASK_KINDS)})),
   wave          TEXT,                           -- label grouping one fan-out of delegate calls (synced)
+  finding       INTEGER NOT NULL DEFAULT 0 CHECK (finding IN (0, 1)), -- 1 = created with --triage (synced); also in ADDED_COLUMNS
   owner_id      INTEGER REFERENCES agents (id) ON DELETE SET NULL,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,

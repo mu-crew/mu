@@ -417,7 +417,7 @@ export function wireTaskCommands(program: Command): void {
     )
     .option(
       "--if-ready",
-      "only close when every blocker is CLOSED and every check on them has a verdict; otherwise no-op + list what it waits for. A CLOSED/rejected blocker refuses (exit 4); wontfix, duplicate, superseded count as ready",
+      "only close when every blocker is CLOSED and every check on them has a verdict; otherwise no-op + list what it waits for. A CLOSED/rejected work blocker refuses (exit 4); a rejected finding (task add --triage), wontfix, duplicate, superseded count as ready",
     )
     .option(
       "--report <text>",

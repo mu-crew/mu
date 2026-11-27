@@ -398,7 +398,7 @@ function syncTask(db: Db, log: Log, key: string): Reconciled {
   const existing = prepareCached(
     db,
     `SELECT t.id, t.title, t.status, t.substate, t.impact, t.effort_days, t.scored,
-            t.dispatch_host, t.kind, t.wave, t.created_at, t.updated_at
+            t.dispatch_host, t.kind, t.wave, t.finding, t.created_at, t.updated_at
        FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
       WHERE w.name = ? AND t.local_id = ?`,
   ).get(workstream, localId) as (Fields & { id: number }) | undefined;
@@ -417,6 +417,7 @@ function syncTask(db: Db, log: Log, key: string): Reconciled {
     dispatch_host: state.dispatchHost,
     kind: state.kind,
     wave: state.wave,
+    finding: state.finding,
     created_at: state.createdAt,
     updated_at: state.updatedAt,
   };
@@ -427,8 +428,8 @@ function syncTask(db: Db, log: Log, key: string): Reconciled {
     prepareCached(
       db,
       `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days,
-                          scored, dispatch_host, kind, wave, owner_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+                          scored, dispatch_host, kind, wave, finding, owner_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
     ).run(
       wsId,
       localId,
@@ -441,6 +442,7 @@ function syncTask(db: Db, log: Log, key: string): Reconciled {
       state.dispatchHost,
       state.kind,
       state.wave,
+      state.finding,
       state.createdAt,
       state.updatedAt,
     );
@@ -451,7 +453,7 @@ function syncTask(db: Db, log: Log, key: string): Reconciled {
   prepareCached(
     db,
     `UPDATE tasks SET title = ?, status = ?, substate = ?, impact = ?, effort_days = ?,
-                      scored = ?, dispatch_host = ?, kind = ?, wave = ?, created_at = ?, updated_at = ?
+                      scored = ?, dispatch_host = ?, kind = ?, wave = ?, finding = ?, created_at = ?, updated_at = ?
       WHERE id = ?`,
   ).run(
     state.title,
@@ -463,6 +465,7 @@ function syncTask(db: Db, log: Log, key: string): Reconciled {
     state.dispatchHost,
     state.kind,
     state.wave,
+    state.finding,
     state.createdAt,
     state.updatedAt,
     existing.id,

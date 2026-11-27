@@ -17,6 +17,7 @@
 //             machine, at any time.
 //   kind/wave  per-field LWW like the rest; kind is one of TASK_KINDS (an
 //             unknown value is dropped, default 'work'), wave is nullable.
+//   finding   per-field LWW, 0 or 1 (anything else dropped), default 0 = work.
 //   substate  not LWW: the newest live op that writes one, resolved
 //             against the folded status (a concurrent close and park fall
 //             back to the status default).
@@ -194,6 +195,7 @@ export interface TaskState {
   dispatchHost: string | null;
   kind: TaskKind;
   wave: string | null;
+  finding: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -265,6 +267,7 @@ export function foldTask(
     dispatchHost: lww(puts, "dispatch_host", strOrNull)?.value ?? null,
     kind: lww(puts, "kind", kindOf)?.value ?? "work",
     wave: lww(puts, "wave", strOrNull)?.value ?? null,
+    finding: lww(puts, "finding", scoredOf)?.value ?? 0,
     createdAt: lww(puts, "created_at", str)?.value ?? born,
     updatedAt: lww(puts, "updated_at", str)?.value ?? born,
   };

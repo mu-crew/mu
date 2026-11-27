@@ -26,4 +26,4 @@ Grade strictly: `critical` needs a concrete path to data loss, breach or outage;
    - unchecked: stays in triage with `UNVERIFIED: <why>`, reported to the human; not REFUTED.
 3. **Group** accepted findings sharing files into one fix task, block the umbrella on it, close the rest `--as superseded`.
 
-`close <umbrella> --if-ready` waits for every finding and check; rejected from triage counts as decided, a rejected accepted task refuses (exit 4).
+`close <umbrella> --if-ready` waits for every finding and check; a rejected `--triage` finding counts as decided, rejected work refuses (exit 4).

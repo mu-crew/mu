@@ -108,7 +108,7 @@ const UNRESOLVED = "<unresolved>";
  * a capture revision is upgradeable in place, so it must not be folded
  * into it (an older schema number is refused before any trigger work).
  */
-export const CAPTURE_VERSION = 8;
+export const CAPTURE_VERSION = 9;
 
 /** Lowest SQLite that mints correct HLCs: `unixepoch('subsec')` arrived
  *  in 3.42; before it the call yields NULL and every op gets a zero-time
@@ -366,6 +366,7 @@ const CAPTURED_COLUMNS = {
     "dispatch_host",
     "kind",
     "wave",
+    "finding",
     "owner_id",
     "created_at",
     "updated_at",

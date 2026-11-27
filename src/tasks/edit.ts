@@ -90,8 +90,8 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
       const now = new Date().toISOString();
       const insertResult = db
         .prepare(
-          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, kind, wave, impact, effort_days, scored, created_at, updated_at)
-         VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, kind, wave, finding, impact, effort_days, scored, created_at, updated_at)
+         VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           wsId,
@@ -100,6 +100,7 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
           opts.kind === "human" ? "parked" : opts.triage === true ? "triage" : "todo",
           opts.kind ?? "work",
           opts.wave ?? null,
+          opts.triage === true ? 1 : 0,
           opts.impact ?? DEFAULT_IMPACT,
           opts.effortDays ?? DEFAULT_EFFORT_DAYS,
           opts.impact !== undefined || opts.effortDays !== undefined ? 1 : 0,
