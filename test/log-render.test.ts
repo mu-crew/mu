@@ -270,16 +270,12 @@ describe("renderOp is never fooled by payload text", () => {
 
   it("an unknown intent never implies the op it did not do (put is not a delete)", () => {
     for (const intent of ["workstream.delete", "task.delete-all", "workstream.destroy"]) {
-      const put = renderOpLine(
-        op({ intent, kind: "workstream", key: "demo", op: "put" }),
-      );
+      const put = renderOpLine(op({ intent, kind: "workstream", key: "demo", op: "put" }));
       expect(put).toContain("op put");
       expect(put).not.toMatch(/^(workstream|task) (delete|destroy)/);
       expect(put).toContain(`intent=${intent}`);
     }
-    const del = renderOp(
-      op({ intent: "migrate.v8", key: "demo", op: "del", payload: "{}" }),
-    );
+    const del = renderOp(op({ intent: "migrate.v8", key: "demo", op: "del", payload: "{}" }));
     expect(del?.verb).toBe("op del");
     expect(del?.detail).toBe("intent=migrate.v8 kind=task");
   });

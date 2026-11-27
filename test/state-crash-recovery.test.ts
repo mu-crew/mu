@@ -98,9 +98,6 @@ describe("mu state --json crash recovery", () => {
     // attributable. The `[reaper]` note is the human-readable trail.
     const reapOps = listLogs(db, {}).filter((r) => r.intent === "task.reap");
     expect(reapOps.every((r) => r.source === "reaper")).toBe(true);
-    expect([...new Set(reapOps.map((r) => r.key))].sort()).toEqual([
-      "auth/design",
-      "auth/impl",
-    ]);
+    expect([...new Set(reapOps.map((r) => r.key))].sort()).toEqual(["auth/design", "auth/impl"]);
   });
 });
