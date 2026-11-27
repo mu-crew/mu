@@ -34,6 +34,7 @@ import {
   readAgentStates,
 } from "../src/channels/index.js";
 import { addHost } from "../src/hosts.js";
+import { ForeignPaneError } from "../src/mux/types.js";
 import { EffectOutcomeUnknownError } from "../src/plugins/errors.js";
 import { reconcile } from "../src/reconcile.js";
 import { pluginHostFixture } from "./_plugin-host.js";
@@ -279,6 +280,19 @@ describe("views (D3)", () => {
     await closeAgent(h.db, "w1", { workstream: "ws" });
     expect(h.stopsAtKill).toEqual([1]);
     expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
+  });
+
+  it("detached: a foreign view refuses the close before the job is stopped", async () => {
+    await setup({ view: "detached" });
+    const a = await spawn();
+    const rex = "block:12345678-1234-1234-1234-123456789abc";
+    h.db.prepare("UPDATE agents SET pane_id = ? WHERE id = ?").run(rex, a.incarnation);
+    await expect(closeAgent(h.db, "w1", { workstream: "ws" })).rejects.toBeInstanceOf(
+      ForeignPaneError,
+    );
+    expect(h.f.backend().stops).toBe(0);
+    expect(h.stopsAtKill).toEqual([]);
+    expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(rex);
   });
 
   it("detached: reattach opens a new view by job.attach; the row keeps its incarnation", async () => {

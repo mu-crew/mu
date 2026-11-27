@@ -49,7 +49,7 @@ import {
   workspaceHost,
 } from "../local-loop.js";
 import { emitEvent } from "../logs.js";
-import { isRetiredPane } from "../mux/binding.js";
+import { assertOwnPane, foreignBackend, isRetiredPane } from "../mux/binding.js";
 import { type MuxBackend, RetiredPaneError } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { deleteRecoveryById, selectRemoteRecovery } from "../remote-recovery.js";
@@ -464,6 +464,18 @@ async function closeLocked(
   if (retired && opts.force !== true) {
     throw new RetiredPaneError(agent.paneId, name, opts.workstream);
   }
+  // Another live backend's pane (a tmux row under Rex, a Rex row under tmux): the active one
+  // can neither kill it nor prove it gone. Refused before any side effect (a detached
+  // plugin job's stop below); only --force drops its row, and no kill is issued on it.
+  const active =
+    agent === undefined || retired || opts.recoveryId !== undefined
+      ? undefined
+      : (await activeMux().catch(() => undefined))?.name;
+  const foreign =
+    active !== undefined &&
+    agent !== undefined &&
+    foreignBackend(agent.paneId, active) !== undefined;
+  if (foreign && opts.force !== true) assertOwnPane(agent.paneId, active);
   const orphan = agent ? undefined : getWorktreeFor(db, opts.workstream, name);
   const nothing: CloseAgentResult = { killedPane: false, deletedRow: false, worktree: null };
   if (agent === undefined || opts.recoveryId !== undefined) {
@@ -590,10 +602,12 @@ async function closeLocked(
   // to name: nothing to kill.
   // A pane another tmux server holds under the row's id is not the agent's: never killed.
   // The identity rides in the kill itself (one tmux call): no restart can land between check and kill.
-  // Only a kill issued on a pane counts: a retired, pending or forced mux-less close killed none.
+  // Only a kill issued on a pane counts: a retired, foreign, pending or forced mux-less close
+  // killed none.
   let killedPane = false;
   if (
     !retired &&
+    !foreign &&
     !isPendingPaneId(agent.paneId) &&
     getAgentForCleanup(db, name, opts.workstream) !== undefined &&
     mux !== undefined
