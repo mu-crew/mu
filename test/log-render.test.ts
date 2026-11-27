@@ -30,7 +30,7 @@ function op(over: Partial<RenderableOp> = {}): RenderableOp {
   return {
     intent: "task.add",
     kind: "task",
-    workstreamName: "demo/t1",
+    key: "demo/t1",
     payload: "{}",
     source: "system",
     op: "put",
@@ -166,7 +166,7 @@ describe("renderOp prose", () => {
     const r = renderOp(
       op({
         intent: "task.note",
-        workstreamName: "demo/t1#2",
+        key: "demo/t1#2",
         payload: '{"author":"worker-1","content":"line one\\nline two"}',
       }),
     );
@@ -184,9 +184,9 @@ describe("renderOp prose", () => {
   });
 
   it("edge intents read directionally from the key pair", () => {
-    const blocked = renderOp(op({ intent: "task.block", workstreamName: "demo/a->demo/b" }));
+    const blocked = renderOp(op({ intent: "task.block", key: "demo/a->demo/b" }));
     expect(blocked?.detail).toBe("blocks b");
-    const un = renderOp(op({ intent: "task.unblock", workstreamName: "demo/a->demo/b" }));
+    const un = renderOp(op({ intent: "task.unblock", key: "demo/a->demo/b" }));
     expect(un?.detail).toBe("no longer blocks b");
   });
 
@@ -201,7 +201,7 @@ describe("renderOp prose", () => {
       op({
         intent: "agent.spawn",
         kind: "agent",
-        workstreamName: "demo",
+        key: "demo",
         payload: "agent spawn worker-1 (cli=pi, role=full-access, pane=%3)",
       }),
     );
@@ -213,7 +213,7 @@ describe("renderOp prose", () => {
         op({
           intent: "agent.spawn",
           kind: "agent",
-          workstreamName: "demo",
+          key: "demo",
           payload: "agent spawn worker-1 (cli=pi)",
         }),
       ).match(/agent spawn/g),
@@ -221,7 +221,7 @@ describe("renderOp prose", () => {
   });
 
   it("a tombstone edge says so rather than claiming a touch", () => {
-    const r = renderOp(op({ intent: "task.unblock", op: "del", workstreamName: "demo/t1" }));
+    const r = renderOp(op({ intent: "task.unblock", op: "del", key: "demo/t1" }));
     expect(r?.detail).toBe("(edge removed)");
   });
 });
@@ -257,7 +257,7 @@ describe("renderOp is never fooled by payload text", () => {
     const r = renderOp(
       op({
         intent: "task.futureverb",
-        workstreamName: "demo/t9",
+        key: "demo/t9",
         payload: '{"shiny":1,"updated_at":"x"}',
       }),
     );
@@ -271,14 +271,14 @@ describe("renderOp is never fooled by payload text", () => {
   it("an unknown intent never implies the op it did not do (put is not a delete)", () => {
     for (const intent of ["workstream.delete", "task.delete-all", "workstream.destroy"]) {
       const put = renderOpLine(
-        op({ intent, kind: "workstream", workstreamName: "demo", op: "put" }),
+        op({ intent, kind: "workstream", key: "demo", op: "put" }),
       );
       expect(put).toContain("op put");
       expect(put).not.toMatch(/^(workstream|task) (delete|destroy)/);
       expect(put).toContain(`intent=${intent}`);
     }
     const del = renderOp(
-      op({ intent: "migrate.v8", workstreamName: "demo", op: "del", payload: "{}" }),
+      op({ intent: "migrate.v8", key: "demo", op: "del", payload: "{}" }),
     );
     expect(del?.verb).toBe("op del");
     expect(del?.detail).toBe("intent=migrate.v8 kind=task");
@@ -302,12 +302,12 @@ describe("renderOp is never fooled by payload text", () => {
 
 describe("opSubject resolves the show-command target from structure", () => {
   it("task ops resolve to the task id from the key", () => {
-    expect(opSubject(op({ intent: "task.close", workstreamName: "demo/t1" }))).toEqual({
+    expect(opSubject(op({ intent: "task.close", key: "demo/t1" }))).toEqual({
       kind: "task",
       id: "t1",
     });
     // Note keys carry a #n suffix that must not leak into the id.
-    expect(opSubject(op({ intent: "task.note", workstreamName: "demo/t1#4" }))).toEqual({
+    expect(opSubject(op({ intent: "task.note", key: "demo/t1#4" }))).toEqual({
       kind: "task",
       id: "t1",
     });
@@ -319,7 +319,7 @@ describe("opSubject resolves the show-command target from structure", () => {
         op({
           intent: "agent.spawn",
           kind: "agent",
-          workstreamName: "demo",
+          key: "demo",
           payload: "agent spawn worker-7 (cli=pi)",
         }),
       ),
@@ -330,7 +330,7 @@ describe("opSubject resolves the show-command target from structure", () => {
     // The retired logRowSubject split on /[#>-]/, so a task named
     // 'my-task' yanked `mu task show my`. Splitting on the KEY structure
     // instead of a character class fixes it.
-    expect(opSubject(op({ intent: "task.close", workstreamName: "demo/my-task" }))).toEqual({
+    expect(opSubject(op({ intent: "task.close", key: "demo/my-task" }))).toEqual({
       kind: "task",
       id: "my-task",
     });

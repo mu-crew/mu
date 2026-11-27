@@ -227,7 +227,7 @@ describe("agents CRUD", () => {
     const reapOps = listLogs(db, {}).filter((r) => r.intent === "task.reap");
     expect(reapOps.length).toBeGreaterThan(0);
     expect(reapOps.every((r) => r.source === "reaper")).toBe(true);
-    expect(reapOps.some((r) => r.workstreamName === "auth/design")).toBe(true);
+    expect(reapOps.some((r) => r.key === "auth/design")).toBe(true);
     expect(
       listNotes(db, "design", "auth").some((n) => n.content.includes("previous owner worker-1")),
     ).toBe(true);

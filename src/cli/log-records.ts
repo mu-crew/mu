@@ -30,7 +30,7 @@ function whatLine(row: LogRow): string {
 /** `log<TAB>seq<TAB>time<TAB>source<TAB>scope<TAB>what`: one escaped line, <= 400 characters. */
 export function logRecord(row: LogRow, whole = false): { line: string; cut: number } {
   const time = row.createdAt.replace(/\.\d+Z$/, "Z");
-  const scope = parseOpKey(row.workstreamName).workstream ?? "-";
+  const scope = parseOpKey(row.key).workstream ?? "-";
   return clippedRecord(["log", String(row.seq), time, row.source, scope], whatLine(row), whole);
 }
 
@@ -76,7 +76,7 @@ function buildItem(row: LogRow, scale: number): { item: LogItem; cut: number } {
   };
   const item: LogItem = {
     seq: row.seq,
-    key: clip(row.workstreamName ?? "", LIMITS.key),
+    key: clip(row.key ?? "", LIMITS.key),
     actor: clip(row.source, LIMITS.actor),
     intent: row.intent === null ? null : clip(row.intent, LIMITS.intent),
     group_id: clip(row.group, LIMITS.group_id),
@@ -97,7 +97,7 @@ export function logItem(row: LogRow, whole = false): { item: LogItem; cut: numbe
       cut: 0,
       item: {
         seq: row.seq,
-        key: row.workstreamName ?? "",
+        key: row.key ?? "",
         actor: row.source,
         intent: row.intent,
         group_id: row.group,

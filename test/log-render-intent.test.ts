@@ -14,7 +14,7 @@ describe("rendering keys on intent, not prose", () => {
     const rendered = renderOp({
       intent: "task.close",
       kind: "task",
-      workstreamName: "demo/t1",
+      key: "demo/t1",
       payload: '{"status":"CLOSED","title":"agent spawn worker-9"}',
       source: "system",
       op: "put",
@@ -27,7 +27,7 @@ describe("rendering keys on intent, not prose", () => {
       renderOp({
         intent: null,
         kind: "message",
-        workstreamName: "demo",
+        key: "demo",
         payload: "agent spawn worker-9",
         source: "user",
         op: "put",

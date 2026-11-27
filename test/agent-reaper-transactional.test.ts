@@ -141,6 +141,6 @@ describe("deleteAgent reaper transactional rollback", () => {
     expect(reapOps.length).toBeGreaterThan(0);
     expect(reapOps.every((r) => r.source === "reaper")).toBe(true);
     // The status revert itself is captured, keyed by natural key.
-    expect(reapOps.some((r) => r.workstreamName === "auth/design")).toBe(true);
+    expect(reapOps.some((r) => r.key === "auth/design")).toBe(true);
   });
 });

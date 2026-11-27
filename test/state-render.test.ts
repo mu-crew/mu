@@ -176,7 +176,7 @@ describe("the op formatter", () => {
       const r = renderOp({
         intent,
         kind: intent.slice(0, intent.indexOf(".")),
-        workstreamName: "alpha/t1",
+        key: "alpha/t1",
         payload: '{"status":"OPEN"}',
         source: "system",
         op: "put",
@@ -197,7 +197,7 @@ describe("the op formatter", () => {
         renderOp({
           intent: null,
           kind: "message",
-          workstreamName: "alpha",
+          key: "alpha",
           payload,
           source: "user",
           op: "put",

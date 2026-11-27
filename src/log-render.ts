@@ -61,7 +61,7 @@ export interface RenderableOp {
   /** `ops.entity`. */
   kind: string;
   /** `ops.key` — the natural key, verbatim. */
-  workstreamName: string | null;
+  key: string | null;
   payload: string;
   /** `ops.actor`. */
   source: string;
@@ -226,7 +226,7 @@ export function renderOp(row: RenderableOp): RenderedOp | null {
   const setPrefix = "task.set-";
   if (intent.startsWith(setPrefix)) {
     const status = intent.slice(setPrefix.length).toUpperCase();
-    const { local } = parseOpKey(row.workstreamName);
+    const { local } = parseOpKey(row.key);
     return { verb: "task status", subject: local ?? "", detail: `\u2192 ${status}` };
   }
 
@@ -249,7 +249,7 @@ export function renderOp(row: RenderableOp): RenderedOp | null {
     }
     return {
       verb: row.op === undefined ? "op" : `op ${row.op}`,
-      subject: row.workstreamName ?? "",
+      subject: row.key ?? "",
       detail: parts.join(" "),
     };
   }
@@ -265,7 +265,7 @@ export function renderOp(row: RenderableOp): RenderedOp | null {
  *  silently falling through to a runtime default. */
 function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
   const bag = fields(row.payload);
-  const key = parseOpKey(row.workstreamName);
+  const key = parseOpKey(row.key);
   const subject = key.local ?? key.workstream ?? "";
   const deleted = row.op === "del";
 
@@ -442,7 +442,7 @@ export function renderOpLine(row: RenderableOp): string {
 export function opSubject(row: RenderableOp): { kind: "task" | "agent"; id: string } | null {
   const intent = row.intent;
   if (intent === null) return null;
-  const { local } = parseOpKey(row.workstreamName);
+  const { local } = parseOpKey(row.key);
   if (intent.startsWith("task.") && local !== undefined && local !== "") {
     return { kind: "task", id: local };
   }

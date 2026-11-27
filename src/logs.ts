@@ -17,6 +17,7 @@
 import { randomUUID } from "node:crypto";
 import { type Db, SYNCED_ENTITIES } from "./db.js";
 import { nextHlc } from "./hlc.js";
+import { parseOpKey } from "./log-render.js";
 import { say } from "./messages.js";
 import { resolveProvenance } from "./provenance.js";
 import { singleLinePayload } from "./segment-line.js";
@@ -321,19 +322,11 @@ function machineId(db: Db): string {
   return row?.machine_id ?? "unknown";
 }
 
-/** Workstream name of an `ops.key` ('' = machine-wide -> null). Keys look like
- *  'ws', 'ws/task', 'ws/task#12', 'ws/a->ws/b': the name is the part before the first '/'. */
-export function workstreamOfKey(key: string | null): string | null {
-  if (!key) return null;
-  const i = key.indexOf("/");
-  return i < 0 ? key : key.slice(0, i);
-}
-
 function rowFromDb(row: RawLogRow): LogRow {
   return {
     seq: row.seq,
     key: row.workstream ?? MACHINE_WIDE_KEY,
-    workstreamName: workstreamOfKey(row.workstream),
+    workstreamName: parseOpKey(row.workstream).workstream ?? null,
     source: row.source ?? "system",
     intent: row.intent,
     group: row.group_id,

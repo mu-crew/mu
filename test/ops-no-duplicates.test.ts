@@ -176,8 +176,8 @@ describe("mu log stays functional and its --tail cursor is consistent", () => {
   it("workstream scoping includes qualified keys, not just the bare name", async () => {
     await runFullSession();
     const rows = listLogs(db, { workstream: "demo" });
-    expect(rows.some((r) => r.workstreamName === "demo")).toBe(true);
-    expect(rows.some((r) => r.workstreamName?.startsWith("demo/"))).toBe(true);
+    expect(rows.some((r) => r.key === "demo")).toBe(true);
+    expect(rows.some((r) => r.key?.startsWith("demo/"))).toBe(true);
   });
 
   it("scoping does not leak between similarly-named workstreams", async () => {
@@ -185,7 +185,7 @@ describe("mu log stays functional and its --tail cursor is consistent", () => {
     addTask(db, { localId: "x", workstream: "demo2", title: "X", impact: 5, effortDays: 1 });
     await runFullSession();
     const rows = listLogs(db, { workstream: "demo" });
-    expect(rows.every((r) => !(r.workstreamName ?? "").startsWith("demo2"))).toBe(true);
+    expect(rows.every((r) => !(r.key ?? "").startsWith("demo2"))).toBe(true);
   });
 });
 

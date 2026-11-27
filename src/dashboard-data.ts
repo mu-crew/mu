@@ -645,7 +645,7 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     limit: opts.logLimit ?? DEFAULT_LOG_LIMIT,
   }).map((row) => ({
     ...logItem(row, true).item,
-    scope: parseOpKey(row.workstreamName).workstream ?? null,
+    scope: row.workstreamName,
   }));
 
   const callerOwn = opts.caller !== null;
