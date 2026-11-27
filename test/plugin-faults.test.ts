@@ -10,7 +10,7 @@
 // gone too once its session is closed.
 
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -202,11 +202,11 @@ describe("plugin faults (D16)", () => {
 
   it("every send and retry carries the committed payload, not the caller's input mutated meanwhile", async () => {
     await setup();
-    f.set({ faults: { "job.start": ["lateRetryable", "effectThenExit"] } });
+    f.set({ lateMs: 1500, faults: { "job.start": ["lateRetryable", "effectThenExit"] } });
     const spec: JobSpec = { ...SPEC, cmd: "original" };
     const pending = kind.start(host(), spec, token);
     const rejected = expect(pending).rejects.toThrow(/outcome unknown/);
-    for (let i = 0; i < 100 && jobCalls("job.start").length === 0; i++) await sleep(10);
+    for (let i = 0; i < 400 && jobCalls("job.start").length === 0; i++) await sleep(10);
     spec.cmd = "changed";
     await rejected;
     const committed = getEffect(db, token)?.params_json;
@@ -231,10 +231,10 @@ describe("plugin faults (D16)", () => {
     await setup();
     setEffectTimeoutForTests(150);
     setPluginGraceForTests(100);
-    f.set({ lateMs: 600, faults: { "job.start": ["late"] } });
+    f.set({ lateMs: 1500, faults: { "job.start": ["late"] } });
     await expect(kind.start(host(), SPEC, token)).rejects.toThrow(/outcome unknown/);
     expect(f.calls().some((c) => c.method === "$/cancel")).toBe(true);
-    await sleep(700);
+    await sleep(1700);
     expect(getEffect(db, token)?.state).toBe("unknown");
     expect(getCarrierJob(db, token)?.job).toBeNull();
     expect(f.backend().starts).toBe(0);
@@ -280,7 +280,14 @@ describe("plugin faults (D16)", () => {
       },
     );
     for (let i = 0; i < 250 && jobCalls("job.start").length === 0; i++) await sleep(20);
+    for (
+      let i = 0;
+      i < 250 && !Number(existsSync(pidFile) ? readFileSync(pidFile, "utf8") : 0);
+      i++
+    )
+      await sleep(20);
     const pgid = Number(readFileSync(pidFile, "utf8"));
+    expect(pgid).toBeGreaterThan(0);
     setEffectOwnerForTests({ pid: mu.pid ?? 0, start: null });
     writeEffect(db, {
       key: token,
@@ -315,9 +322,9 @@ describe("plugin faults (D16)", () => {
     await setup();
     f.set({ faults: { "job.start": ["effectThenExit"] } });
     await expect(kind.start(host(), SPEC, token)).rejects.toThrow(/outcome unknown/);
-    f.set({ lateMs: 300, faults: { "job.start": ["effectThenExit"], "job.lookup": ["late"] } });
+    f.set({ lateMs: 1500, faults: { "job.start": ["effectThenExit"], "job.lookup": ["late"] } });
     const first = kind.resolve(token);
-    for (let i = 0; i < 100 && jobCalls("job.lookup").length === 0; i++) await sleep(10);
+    for (let i = 0; i < 400 && jobCalls("job.lookup").length === 0; i++) await sleep(10);
     setEffectOwnerForTests({ pid: process.pid, start: "another mu" });
     await expect(resolveEffect(db, token)).rejects.toThrow(EffectHeldError);
     await expect(resolveEffect(db, token)).rejects.toThrow(
@@ -374,9 +381,9 @@ describe("plugin faults (D16)", () => {
 
   it("F12: a creator still in its call when a second verb resolves: the second refuses naming it; one result", async () => {
     await setup();
-    f.set({ lateMs: 300, faults: { "job.start": ["late"] } });
+    f.set({ lateMs: 1500, faults: { "job.start": ["late"] } });
     const started = kind.start(host(), SPEC, token);
-    for (let i = 0; i < 100 && jobCalls("job.start").length === 0; i++) await sleep(10);
+    for (let i = 0; i < 400 && jobCalls("job.start").length === 0; i++) await sleep(10);
     await expect(resolveEffect(db, token)).rejects.toThrow(
       new RegExp(`in flight: its creator, pid ${process.pid}`),
     );

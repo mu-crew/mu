@@ -36,7 +36,7 @@
 //                  that holds stdout (its pid in `<config>.helper`)
 //   badUtf8        a reply with a byte that is not UTF-8
 //   effectThenExit the effect happens, then the process exits before replying
-//   lateRetryable  a retryable error after 200 ms (nothing happened)
+//   lateRetryable  a retryable error after lateMs (default 200 ms) (nothing happened)
 //   ok             the normal answer
 //
 // The job seam (declared through `seams.job`) and the channel's deliveries keep
@@ -615,7 +615,7 @@ function onMessage(msg) {
       return;
     }
     case "lateRetryable":
-      setTimeout(() => fail(id, "retryable", "injected delayed retryable"), 200);
+      setTimeout(() => fail(id, "retryable", "injected delayed retryable"), config().lateMs ?? 200);
       return;
     case "effectThenExit":
       backendAnswer(msg.method, msg.params, config());

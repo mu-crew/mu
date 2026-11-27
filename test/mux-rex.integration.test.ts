@@ -130,7 +130,7 @@ describeIfRex("rex integration (private Rex server)", () => {
     });
     const tool = await spawnIn(
       "tool",
-      String.raw`sh -c "printf '\033]7501;state=working:app=cargo\033\\\\'"; echo TOOL-DONE; exec sleep 60`,
+      String.raw`sh -c "printf '\033]7501;state=working:app=cargo\033\\\\'"; echo TOOL-DON''E; exec sleep 60`,
     );
     await pollUntil(async () => (await capture(tool)).includes("TOOL-DONE"), {
       description: "tool pane ran its child",
