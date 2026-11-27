@@ -140,7 +140,7 @@ export const MESSAGES = {
   "agent.abort_needs_ctl": (name: string, cli: string) =>
     `agent ${name} runs ${cli}, not pi: abort needs the mu pi extension; close the agent instead`,
   "agent.model_needs_ctl": (name: string, ws: string, channel: string) =>
-    `agent ${name} is on the ${channel} channel: switching its model needs pi's control socket (the ctl channel); spawn a new agent with the model instead (mu agent spawn ... --cli 'pi --model <provider/id>' -w ${ws})`,
+    `agent ${name} is on the ${channel} channel: switching its model needs pi's control socket (the ctl channel); spawn a new agent with the model instead (mu agent spawn ... --model <provider/id> -w ${ws})`,
   "agent.model_refused": (name: string, model: string, reason: string) =>
     `pi refused to switch agent ${name} to ${model}: ${reason}; the model is unchanged`,
   "agent.abort_timeout": (name: string, ms: number) =>
