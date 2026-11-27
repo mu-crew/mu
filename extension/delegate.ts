@@ -272,7 +272,7 @@ export function registerDelegate(
   let queueSeq = 0;
   /** Answers recorded here that no settle has shown yet and no wake has
    *  carried into the conversation, by call id. */
-  const owed = new Map<string, WakeAnswer & { at: number }>();
+  const owed = new Map<string, WakeAnswer & { at: number; noted?: boolean }>();
   /** Wakes that have not entered the conversation: being delivered, or queued
    *  behind a running turn. Keyed by a per-wake id carried in the message's
    *  details, cleared on its message_start. `sent`: pi.sendMessage returned (pi
@@ -297,15 +297,23 @@ export function registerDelegate(
   let settleCheck: ReturnType<typeof setImmediate> | undefined;
   let closed = false;
   let lastPending = 0;
+  let lastOwedCount = 0;
+  /** Calls between their run's end and `owed` (being recorded): still owed here. */
+  const recording = new Set<string>();
   /** Running, starting and queued: every delegate whose answer is still
-   *  to come back here. Failed panes have answered, so they do not count. */
+   *  to come back here. Failed panes have answered, so they do not count.
+   *  `@mu_pending` also counts the answers still owed to the transcript. */
   const reportPending = () => {
     const count = inflight.size + starting + queue.length;
+    const owedCount = count + new Set([...recording, ...owed.keys()]).size;
+    // tmux: the count as `@mu_pending` on this pane; shutdown unsets it once.
+    if (owedCount !== lastOwedCount) {
+      lastOwedCount = owedCount;
+      if (!closed) void reportPendingPaneOption(owedCount);
+    }
     if (count === lastPending) return;
     lastPending = count;
     emitDelegatesStatus(count);
-    // tmux: the count as `@mu_pending` on this pane; shutdown unsets it once.
-    if (!closed) void reportPendingPaneOption(count);
     try {
       pi.events.emit(PENDING_CHANNEL, { source: DELEGATE_TOOL, count });
     } catch {
@@ -760,6 +768,7 @@ export function registerDelegate(
       ...(pane.closed ? {} : { kept: pane.why }),
       at: Date.now(),
     });
+    reportPending();
     wakeIfIdle();
   }
 
@@ -823,6 +832,7 @@ export function registerDelegate(
     );
     const settle = async (r: MuResult) => {
       trace("settle", { call: call.callId, name, code: r.code });
+      recording.add(call.callId);
       forget(key);
       try {
         await deliver(
@@ -855,6 +865,9 @@ export function registerDelegate(
             "deliver-failed",
           ),
         ).catch(() => {});
+      } finally {
+        recording.delete(call.callId);
+        reportPending();
       }
     };
     void waiting.then(async (r) => {
@@ -994,10 +1007,12 @@ export function registerDelegate(
         return;
       }
       // The run finished the call durably (verdict, report, close): owed to the settle.
+      recording.add(call.callId);
       const verdict = await calls
         .show(call.callId)
         .then((x) => x.verdict ?? undefined)
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => recording.delete(call.callId));
       owed.set(call.callId, {
         callId: call.callId,
         name,
@@ -1010,6 +1025,7 @@ export function registerDelegate(
           : {}),
         at: Date.now(),
       });
+      reportPending();
       wakeIfIdle();
     };
     // A cancel's SIGTERM aborts the turn, finishes the call, then stops the
@@ -1455,11 +1471,14 @@ export function registerDelegate(
     if (typeof id !== "number") return;
     for (const c of arriving.get(id)?.calls ?? []) owed.delete(c);
     arriving.delete(id);
+    reportPending();
   });
 
   /** Stop waking for these: the reports stay recorded and the next settle's wait
-   *  still owes them. One line per answer in the conversation (no turn). */
-  const dropWakes = (ids: number[], also: string[] = []) => {
+   *  still owes them. One line per answer in the conversation (no turn). `keep`
+   *  (an interrupt): the answers stay owed here too, noted once, so a later
+   *  settle or wake still delivers them. */
+  const dropWakes = (ids: number[], also: string[] = [], keep = false) => {
     const names = new Set(also);
     for (const id of ids) {
       const a = arriving.get(id);
@@ -1473,10 +1492,13 @@ export function registerDelegate(
     for (const c of names) {
       const a = owed.get(c);
       if (!a) continue;
-      owed.delete(c);
+      if (!keep) owed.delete(c);
+      else if (a.noted) continue;
+      a.noted = true;
       dropped.push(a);
     }
-    trace("dropped", { calls: dropped.map((d) => d.callId) });
+    reportPending();
+    trace("dropped", { calls: dropped.map((d) => d.callId), keep });
     if (dropped.length === 0) return;
     void Promise.resolve(
       send(
@@ -1531,11 +1553,13 @@ export function registerDelegate(
   pi.on("agent_settled", (e, ctx) => {
     busy = false;
     const sent = [...arriving].filter(([, a]) => a.sent).map(([id]) => id);
-    // Escape clears pi's queue along with the run: what it held never arrives,
-    // and the user stopped. No wake: one note; the next prompt's settle shows them.
+    // An interrupt (Esc in the pane, a ctl abort, murmur stop) clears pi's queue
+    // along with the run: what it held never arrives, and the user stopped. No
+    // wake: one note. The answers stay owed: the next settle shows them, and an
+    // answer it does not show is woken for after it (recoverLost).
     if ((e as { aborted?: unknown }).aborted === true) {
       clearImmediate(settleCheck);
-      dropWakes(sent, [...owed.keys()]);
+      dropWakes(sent, [...owed.keys()], true);
       return;
     }
     if (sent.length === 0 && owed.size === 0) return;
@@ -1554,6 +1578,29 @@ export function registerDelegate(
       () => undefined,
     );
     const items = (r ? (json(r)?.items as Record<string, unknown>[] | undefined) : undefined) ?? [];
+    // Answers recorded that no settle has delivered into this transcript (a reload, a quit
+    // before the settle, an interrupt): owed again, counted, and woken for while pi is idle.
+    // Without the settle wait (MU_NUDGE=0) the wake itself delivers, so nothing is re-adopted.
+    if (process.env.MU_NUDGE !== "0") {
+      for (const row of items) {
+        if (row.settleOwed !== true || typeof row.callId !== "string" || owed.has(row.callId))
+          continue;
+        const call = callInfoOf(row);
+        if (call.caller !== `pi:${session}`) continue;
+        owed.set(call.callId, {
+          callId: call.callId,
+          name: typeof row.agent === "string" ? row.agent : call.task,
+          workstream: call.workstream,
+          task: call.task,
+          outcome: String(row.state),
+          ...(typeof row.verdict === "string" ? { verdict: row.verdict } : {}),
+          ...(call.record ? { record: `${call.record.workstream}/${call.record.task}` } : {}),
+          at: Date.now(),
+        });
+      }
+      reportPending();
+      wakeIfIdle();
+    }
     for (const row of items) {
       // A mux-free run is its own child (agent = its task) and finishes by itself.
       if (row.state !== "running" || typeof row.agent !== "string" || row.agent === row.task)
@@ -1663,6 +1710,7 @@ export function registerDelegate(
       if (Array.isArray(shown)) for (const c of shown) owed.delete(c);
       else
         for (const [c, a] of owed) if (a.at < (shown as { before: number }).before) owed.delete(c);
+      reportPending();
     },
   };
 }

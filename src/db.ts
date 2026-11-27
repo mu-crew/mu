@@ -75,6 +75,7 @@ import {
 import { say } from "./messages.js";
 import { defaultStateDir, refusePendingStateImport, xdgStateHome } from "./state-dir.js";
 import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
+import { adoptSettleLane } from "./wait-cursor.js";
 
 export {
   BLOCKED_VIEW_SQL,
@@ -560,6 +561,8 @@ export function upgradeSchema(db: Db, opts: { v13?: boolean } = {}): void {
     seedMachineIdentity(db);
     installCaptureLocked(db);
     if (refoldChecks) refoldStoredChecks(db);
+    // Older delegate tokens count as delivered to the transcript (src/wait-cursor.ts).
+    adoptSettleLane(db);
     db.exec("COMMIT");
   } catch (err) {
     try {

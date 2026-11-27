@@ -43,13 +43,19 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
     const settleWaits: {
       args: readonly string[];
       signal?: AbortSignal;
+      env?: Record<string, string | undefined>;
       resolve: (r: MuResult) => void;
     }[] = [];
-    const run: MuRunner = (args, signal, stdin) => {
+    const run: MuRunner = (args, signal, stdin, o) => {
       if (args[0] === "state") return Promise.resolve(ok({ workstreams: [] }));
       if (args[0] === "wait")
         return new Promise((resolve) => {
-          settleWaits.push({ args, resolve, ...(signal ? { signal } : {}) });
+          settleWaits.push({
+            args,
+            resolve,
+            ...(signal ? { signal } : {}),
+            ...(o?.env ? { env: o.env } : {}),
+          });
           signal?.addEventListener("abort", () =>
             resolve(ok({ firing: { kind: "interrupted" }, interrupted: true, exit: 143 })),
           );
@@ -101,6 +107,9 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
       ?.resolve(ok({ agents: [{ outcome: "done", lastText: "42 is it" }] }));
     for (let i = 0; i < 4; i++) await flush();
     const settling = t.settle();
+    for (let i = 0; i < 20 && t.settleWaits.length === 0; i++) await flush();
+    // The settle lane: a shell `mu wait` of this session never consumes what this wait shows.
+    expect(t.settleWaits[0]?.env).toMatchObject({ PI_SESSION_ID: "s1", MU_WAIT_SETTLE: "1" });
     await t.answerWait(delegateEvent(id));
     const r = await settling;
     expect(r?.continue).toBe(true);

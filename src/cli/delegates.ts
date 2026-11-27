@@ -45,6 +45,7 @@ import {
 } from "../delegates.js";
 import { formatBytes } from "../disk-recon.js";
 import { muTable, pc } from "../output.js";
+import { settleOwed } from "../wait-cursor.js";
 import { qualifiedRefProblem } from "../workstream-scope.js";
 import { backupBeside, CHECKPOINT_PENDING, vacuumAndCheck } from "./db.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
@@ -77,6 +78,26 @@ function renderRows(rows: readonly DelegateRow[]): string {
   return t.toString();
 }
 
+/**
+ * `settleOwed: true` on each done or failed call whose answer no settle wait has delivered into its
+ * caller's transcript yet (src/wait-cursor.ts): what a reloaded pi runtime re-adopts.
+ */
+export function withSettleOwed(
+  db: Db,
+  rows: readonly DelegateRow[],
+): (DelegateRow & { settleOwed?: true })[] {
+  const answered = rows.filter((r) => r.state === "done" || r.state === "failed");
+  const owed = new Set<string>();
+  for (const caller of new Set(answered.map((r) => r.caller)))
+    for (const id of settleOwed(
+      db,
+      caller,
+      answered.filter((r) => r.caller === caller),
+    ))
+      owed.add(id);
+  return rows.map((r) => (owed.has(r.callId) ? { ...r, settleOwed: true } : r));
+}
+
 export async function cmdDelegatesList(
   db: Db,
   opts: WsOpt & { caller?: string; wave?: string; all?: boolean },
@@ -85,7 +106,7 @@ export async function cmdDelegatesList(
   const rows = listDelegates(db, caller, opts.workstream, {
     ...(opts.wave !== undefined ? { wave: opts.wave } : {}),
   });
-  if (opts.json) return emitJsonCollection(rows);
+  if (opts.json) return emitJsonCollection(withSettleOwed(db, rows));
   if (rows.length === 0) {
     console.log(
       caller !== undefined && opts.caller === undefined

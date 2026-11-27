@@ -266,6 +266,12 @@ export interface WaitOptions {
    * event is not urgent, up to READY_BATCH_MAX (src/wait-select.ts).
    */
   mode?: "first" | "all" | "ready";
+  /**
+   * The settle lane: pi's settle wait (`MU_WAIT_SETTLE=1`). A delegate answer counts as consumed
+   * only once a settle-lane wait delivered it into the caller's transcript, whatever a shell
+   * `mu wait` of the same caller consumed; its delivery also hides it from the shell's waits.
+   */
+  settleLane?: boolean;
   /** `owned` (default) includes owned refs; `targets` limits events to the selected targets while retaining their registration and cursors; `refs` does not use either. */
   eventScope?: "owned" | "targets" | "refs";
   /** Delegate calls of this wave (the callers' only, never narrowed by `scope`) are targets; the result carries their tally. A name none of their calls carry throws WaveNotFoundError. */

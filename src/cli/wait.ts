@@ -331,6 +331,8 @@ export async function runWait(
     result = await waitWithActions(db, spec.refs, {
       callers,
       mode: spec.mode,
+      // pi's settle wait (extension/nudge.ts): delegate answers delivered into the transcript.
+      ...(process.env.MU_WAIT_SETTLE === "1" ? { settleLane: true } : {}),
       eventScope: spec.eventScope ?? "owned",
       ...(spec.scope !== undefined ? { scope: spec.scope } : {}),
       ...(status !== undefined ? { status } : {}),

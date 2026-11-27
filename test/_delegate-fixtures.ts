@@ -9,6 +9,7 @@ import {
   type MuResult,
   type MuRunner,
 } from "../extension/delegate.js";
+import { withSettleOwed } from "../src/cli/delegates.js";
 import { classifyError } from "../src/cli/handle.js";
 import { type Db, openDb } from "../src/db.js";
 import {
@@ -128,9 +129,12 @@ export function delegatesVerb(db: Db, args: readonly string[], stdin?: string): 
         );
       case "list":
         return wrap({
-          items: listDelegates(db, undefined, undefined, {
-            ...(flag(args, "--wave") ? { wave: flag(args, "--wave") as string } : {}),
-          }),
+          items: withSettleOwed(
+            db,
+            listDelegates(db, undefined, undefined, {
+              ...(flag(args, "--wave") ? { wave: flag(args, "--wave") as string } : {}),
+            }),
+          ),
         });
       case "show": {
         const call = getDelegateCall(db, id);

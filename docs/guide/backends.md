@@ -20,8 +20,9 @@ absent). Other harnesses report `state: unknown` unless you use murmur 2.x
 (`release/2.x`) hooks, or switch to vtmux or Rex. `mule` and `muzzle` are
 unaffected apart from missing 7501 glyphs on TUI jobs.
 
-On any tmux, a pi with `mu_delegate` calls still owed to it also sets the user
-pane option `@mu_pending` to that count on its own pane, beside the
+On any tmux, a pi with `mu_delegate` calls still owed to it (running, queued,
+or answered but not yet shown in its transcript, across an interrupt and a
+reload) also sets the user pane option `@mu_pending` to that count on its own pane, beside the
 `@mu_agent`/`@mu_workstream`/`@mu_role` crew tags. It unsets it at 0, when pi
 exits, and when pi starts (a pi killed in the pane may have left it set).
 Only the pane's own pi writes it: the one serving `$MU_CTL_SOCK`, or a pi

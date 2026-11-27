@@ -9,7 +9,11 @@
 //             the run of a new process.
 //   task      `closed` + the id of the task's newest note. A re-close
 //             writes a newer note, so a reopened-and-closed task is news.
-//   delegate  `delegate` + 1: a call reaches a terminal state once.
+//   delegate  `delegate` + 1: a call reaches a terminal state once. The
+//             settle lane (pi's settle wait, `MU_WAIT_SETTLE=1`) consumes
+//             it as `delegate` + 2: the answer reached the transcript. A
+//             shell wait's 1 never hides an answer from the settle lane;
+//             the settle's 2 hides it from the shell too.
 //
 // A token is written only for an event the wait DELIVERED. Registering a
 // ref or starting a wait never writes one, and a sibling that a `first`
@@ -40,6 +44,49 @@ export const doneKey = (workstream: string, name: string): string =>
   `done|${cursorKey("agent", workstream, name)}`;
 
 export const DELEGATE_TOKEN: CursorToken = { incarnation: "delegate", runs: 1 };
+/** A delegate answer the settle lane delivered into the caller's transcript (see the file comment). */
+export const SETTLE_TOKEN: CursorToken = { incarnation: "delegate", runs: 2 };
+
+/**
+ * The settle lane's adoption mark: bit 0 of SQLite's `PRAGMA user_version`, which mu uses for
+ * nothing else (the schema stamp is its own table). A header field, so no row any table counts.
+ */
+const SETTLE_LANE_BIT = 1;
+
+const laneAdopted = (db: Db): boolean =>
+  ((db.pragma("user_version", { simple: true }) as number) & SETTLE_LANE_BIT) !== 0;
+
+/**
+ * Once per DB, inside openDb's upgrade transaction (so before any wait of this build): every
+ * delegate token an older mu wrote (`delegate` + 1, by a shell wait or by the settle alike) counts
+ * as delivered to the transcript, so the lane never replays history. After the mark, a 1 is a
+ * shell wait's alone. Idempotent.
+ */
+export function adoptSettleLane(db: Db): void {
+  if (laneAdopted(db)) return;
+  db.prepare(
+    "UPDATE wait_cursors SET runs = ? WHERE incarnation = ? AND runs = ? AND ref LIKE 'delegate:%'",
+  ).run(SETTLE_TOKEN.runs, DELEGATE_TOKEN.incarnation, DELEGATE_TOKEN.runs);
+  const v = db.pragma("user_version", { simple: true }) as number;
+  db.pragma(`user_version = ${v | SETTLE_LANE_BIT}`);
+}
+
+/**
+ * The call ids of `calls` (terminal, `caller`'s) whose answer the settle lane has not delivered
+ * into `caller`'s transcript. A read.
+ */
+export function settleOwed(
+  db: Db,
+  caller: string,
+  calls: readonly { workstream: string; callId: string }[],
+): string[] {
+  const cursors = readCursors(db, caller);
+  return calls.flatMap((c) =>
+    isConsumed(cursors.get(cursorKey("delegate", c.workstream, c.callId)), SETTLE_TOKEN)
+      ? []
+      : [c.callId],
+  );
+}
 
 /** The reserved caller of the stall-log marks: no caller is spelled like it (`<ws>/<agent>`, `pi:<s>`). */
 const STALL_LOG_CALLER = "mu:agent.stall";

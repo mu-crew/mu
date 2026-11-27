@@ -274,8 +274,9 @@ describe("pending reports and delivery tracking", () => {
     expect(text).toContain("- scratch/delegate-2 (done;");
     expect(text).not.toContain("the answer");
     expect(reportOf(mu)).toBe("the answer"); // durable: the next settle's wait shows it
+    // Still owed: the next completed turn whose settle did not show it wakes for it (fsj U4).
     await settled(p);
-    expect(p.sendMessage).toHaveBeenCalledTimes(2); // no wake after the user stopped
+    expect(wakeCalls(p)).toHaveLength(2);
   });
 
   it("an answer recorded during an aborted run is noted, never woken", async () => {

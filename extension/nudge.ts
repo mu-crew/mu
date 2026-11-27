@@ -351,8 +351,13 @@ export function registerNudge(
         if (ESC.test(data)) ctl.abort();
         return undefined; // never consumed: pi still sees the key
       }) ?? (() => {});
+    // The settle lane: what this wait shows lands in the transcript, so a shell `mu wait` of the
+    // same session never consumes it from here (src/wait-cursor.ts).
     const wait = (args: readonly string[]) =>
-      run(args, ctl.signal, undefined, { env, drainMs: SETTLE_DRAIN_MS });
+      run(args, ctl.signal, undefined, {
+        env: { ...env, MU_WAIT_SETTLE: "1" },
+        drainMs: SETTLE_DRAIN_MS,
+      });
     const mu: Run1 = async (args) =>
       envelopeOf(
         (await run(args, undefined, undefined, { env }).catch(() => undefined))?.stdout ?? "",

@@ -440,11 +440,13 @@ describe("sync", () => {
       expect(ops[0]?.entity).toBe("edge");
       // Edge first (neither task is here), then its parents, straight
       // through the exported incoming-op seam: no repair pass, no marker.
+      // user_version holds only the settle lane's open-time mark (src/wait-cursor.ts): unchanged.
+      const marks = b.pragma("user_version", { simple: true });
       applyIncomingOp(b, ops[0] as Op);
       expect(edgeCount(b)).toBe(0);
       for (const op of ops.slice(1)) applyIncomingOp(b, op);
       expect(edgeCount(b)).toBe(1);
-      expect(b.pragma("user_version", { simple: true })).toBe(0);
+      expect(b.pragma("user_version", { simple: true })).toBe(marks);
     });
   });
 

@@ -93,10 +93,12 @@ import { DEFAULT_SUBSTATE, type TaskStatus } from "./tasks/status.js";
 import {
   type CursorToken,
   closedToken,
+  DELEGATE_TOKEN,
   isConsumed,
   logStallOnce,
   readCursors,
   recordCursors,
+  SETTLE_TOKEN,
 } from "./wait-cursor.js";
 import {
   agentExists,
@@ -228,6 +230,9 @@ export async function waitForEvents(
       if (b !== undefined) begun.set(c, b);
     }
   }
+  // The settle lane: delegate answers are consumed as delivered into the transcript, apart from
+  // what a shell wait of the same caller consumed (src/wait-cursor.ts).
+  const delegateToken = opts.settleLane === true ? SETTLE_TOKEN : DELEGATE_TOKEN;
   const cursorsBy = new Map<string, Map<string, CursorToken>>(
     (consumes ? callers : []).map((c) => [c, readCursors(db, c)]),
   );
@@ -1054,7 +1059,7 @@ export async function waitForEvents(
       }
     }
     for (const { call, target: isTarget, suppressible } of calls.values()) {
-      push(delegateItem(call, isTarget, suppressible, order++));
+      push(delegateItem(call, isTarget, suppressible, order++, delegateToken));
     }
     if (opts.blockersOf !== undefined && umbrella != null) {
       let open = false;

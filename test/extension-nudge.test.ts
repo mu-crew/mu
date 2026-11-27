@@ -136,7 +136,10 @@ describe("the settle wait", () => {
     const [w] = mu.waits();
     expect(w?.args).toEqual([...SETTLE_WAIT_ARGS]);
     expect(w?.args).toEqual(["wait", "--ready", "--on-stall", "exit", "--json"]);
-    expect(w?.opts).toEqual({ env: { PI_SESSION_ID: "s1" }, drainMs: SETTLE_DRAIN_MS });
+    expect(w?.opts).toEqual({
+      env: { PI_SESSION_ID: "s1", MU_WAIT_SETTLE: "1" },
+      drainMs: SETTLE_DRAIN_MS,
+    });
   });
 
   it("an event continues the turn with the rule and the wait's own result", async () => {
