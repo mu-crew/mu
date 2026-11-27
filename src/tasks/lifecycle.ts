@@ -253,11 +253,37 @@ export function closeReadiness(
   return { blockingIds, pendingChecks };
 }
 
+/** True when `ws/name` was closed from OPEN/triage (a finding nobody
+ *  accepted into work). Replays the task's own ops: the pair it held just
+ *  before the latest transition into CLOSED. A task accepted, claimed or
+ *  created as normal work is not a finding, so its rejection stays a refusal. */
+function wasRejectedAsFinding(db: Db, ws: string, name: string): boolean {
+  const rows = db
+    .prepare(
+      "SELECT payload FROM ops WHERE entity = 'task' AND key = ? AND op = 'put' ORDER BY seq",
+    )
+    .all(`${ws}/${name}`) as { payload: string }[];
+  let status = "";
+  let substate = "";
+  let before = "";
+  for (const r of rows) {
+    const p = JSON.parse(r.payload) as { status?: string; substate?: string };
+    const nextStatus = p.status ?? status;
+    if (nextStatus === "CLOSED" && status !== "CLOSED") before = `${status}/${substate}`;
+    status = nextStatus;
+    substate = p.substate ?? substate;
+  }
+  return before === "OPEN/triage";
+}
+
 export interface CloseTaskOptions extends EvidenceOption {
   workstream: string;
   /** When true, no-op the close unless every blocker is CLOSED and every
    *   check issued on them has a verdict (`closeReadiness`).
    *   Returns a `CloseSkippedResult` carrying what it waits for.
+   *   A CLOSED/rejected blocker that was a work task (not rejected from
+   *   OPEN/triage) throws TaskRejectedBlockersError (`closeReadiness` itself
+   *   only reports waits).
    *   When false / omitted, behaves as bare `closeTask`
    *   (closes regardless of blocker status). */
   ifReady?: boolean;
@@ -341,8 +367,18 @@ function closeTaskImpl(
   if (opts.ifReady && before) {
     // A rejected blocker is a refusal, not a wait: error before the
     // not-ready skip, so no retry loop spins on it.
-    const rejected = getTaskEdgesWithStatus(db, localId, before.workstreamName)
-      .blockers.filter((e) => e.status === "CLOSED" && e.substate === "rejected")
+    const rejected = (
+      db
+        .prepare(
+          `SELECT t.local_id AS name, w.name AS ws FROM task_edges e
+             JOIN tasks t ON t.id = e.from_task_id
+             JOIN workstreams w ON w.id = t.workstream_id
+            WHERE e.to_task_id = ? AND t.status = 'CLOSED' AND t.substate = 'rejected'
+            ORDER BY t.local_id`,
+        )
+        .all(taskIdFor(db, localId, before.workstreamName) ?? -1) as { name: string; ws: string }[]
+    )
+      .filter((e) => !wasRejectedAsFinding(db, e.ws, e.name))
       .map((e) => e.name);
     if (rejected.length > 0) {
       throw new TaskRejectedBlockersError(localId, before.workstreamName, rejected);

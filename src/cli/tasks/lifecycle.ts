@@ -48,8 +48,17 @@ export async function cmdTaskClose(
     throw new UsageError(say("task.close_note_alias"), { showHelp: false });
   }
   const opts = { ...rawOpts, evidence: rawOpts.evidence ?? rawOpts.note };
-  // `-` reads the text from stdin, as `task note -` does (stdin is read once:
-  // at most one of --evidence/--note/--why may be `-`).
+  // `-` reads the text from stdin, as `task note -` does. Stdin is read once,
+  // so at most one of --evidence/--note/--why may be `-`.
+  const dashes = [rawOpts.evidence, rawOpts.note, rawOpts.why].filter((v) => v === STDIN_ARG);
+  if (dashes.length > 1) {
+    throw new UsageError(
+      "at most one of --evidence, --note, --why may be '-' (stdin is read once)",
+      {
+        showHelp: false,
+      },
+    );
+  }
   if (opts.evidence === STDIN_ARG) opts.evidence = await readStdinText("--evidence");
   if (opts.why === STDIN_ARG) opts.why = await readStdinText("--why");
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");

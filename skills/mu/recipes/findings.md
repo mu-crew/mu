@@ -17,13 +17,13 @@ Grade strictly: `critical` needs a concrete path to data loss, breach or outage;
 
 ## Triage
 
-1. **Refute each** with a [call or check](tasks-or-calls.md) (`record` in pi). Skip low style. High: three refuters, accept at 2 CONFIRMED. High or critical: one from [another family](models.md) (a pi delegate or a `scratch` pane).
+1. **Refute each** with a [call or check](tasks-or-calls.md) (`record` in pi). High: three refuters, accept at 2 CONFIRMED. High or critical: one from [another family](models.md).
 2. **Decide**; the state is the decision, and `--why` names the deciding evidence:
    - real: `mu task accept <id> --evidence "2/3 CONFIRMED: <why>"`
    - false: `mu task close <id> --as rejected --why "<the guard that disproves it>"`
    - same as another: `--as duplicate --why "same as <id>"`
    - true, not worth it: `--as wontfix --why "<cost vs impact>"`
    - unchecked: stays in triage with `UNVERIFIED: <why>`, reported to the human; not REFUTED.
-3. **Group** accepted findings sharing files into one fix task, block the umbrella on it, close the grouped ones `--as superseded`.
+3. **Group** accepted findings sharing files into one fix task, block the umbrella on it, close the rest `--as superseded`.
 
-`mu task close <umbrella> --if-ready` waits for every finding and check.
+`close <umbrella> --if-ready` waits for every finding and check; rejected from triage counts as decided, a rejected accepted task refuses (exit 4).

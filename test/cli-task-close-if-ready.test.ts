@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setStdinReaderForTests } from "../src/cli/stdin.js";
 import { openDb } from "../src/db.js";
-import { addTask, closeTask, getTask } from "../src/tasks.js";
+import { acceptTask, addTask, claimTask, closeTask, getTask, parkTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
@@ -311,5 +311,202 @@ describe("mu task close --if-ready", () => {
     expect(n.stdout).toContain("it's $HOME");
     expect(n.stdout).toContain("no $time");
     expect(n.stdout).not.toMatch(/\t-\s*$/m);
+  });
+
+  // ---- fsj U3 rework: finding vs work rejection, stdin, precedence ----
+  function seedUmbrella(blockers: { id: string; triage?: boolean }[]) {
+    const seed = openDb({ path: dbPath });
+    for (const b of blockers) {
+      addTask(seed, {
+        localId: b.id,
+        workstream: "test",
+        title: b.id,
+        impact: 50,
+        effortDays: 1,
+        ...(b.triage ? { triage: true } : {}),
+      });
+    }
+    addTask(seed, {
+      localId: "umbrella",
+      workstream: "test",
+      title: "Umbrella",
+      impact: 50,
+      effortDays: 1,
+      blockedBy: blockers.map((b) => b.id),
+    });
+    return seed;
+  }
+  const rej = { workstream: "test", why: "w", as: "rejected" } as const;
+  const umbrellaStatus = () => {
+    const db = openDb({ path: dbPath });
+    const st = getTask(db, "umbrella", "test")?.status;
+    db.close();
+    return st;
+  };
+
+  it("findings flow: triage -> rejected -> umbrella --if-ready closes", async () => {
+    const seed = seedUmbrella([
+      { id: "f1", triage: true },
+      { id: "f2", triage: true },
+    ]);
+    seed.close();
+    expect(
+      (
+        await runCli(
+          ["task", "close", "umbrella", "-w", "test", "--if-ready", "--evidence", "e"],
+          dbPath,
+        )
+      ).stdout,
+    ).toContain("Skipped");
+    const db = openDb({ path: dbPath });
+    closeTask(db, "f1", rej);
+    acceptTask(db, "f2", { workstream: "test" });
+    closeTask(db, "f2", { workstream: "test", evidence: "fixed" });
+    db.close();
+    const r = await runCli(closeIfReady, dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(umbrellaStatus()).toBe("CLOSED");
+  });
+
+  it("a rejected required blocker rejected from triage counts as decided", async () => {
+    seedUmbrella([{ id: "a", triage: true }]).close();
+    const db = openDb({ path: dbPath });
+    closeTask(db, "a", rej);
+    db.close();
+    expect((await runCli(closeIfReady, dbPath)).exitCode).toBeNull();
+    expect(umbrellaStatus()).toBe("CLOSED");
+  });
+
+  it("a rejected work blocker refuses: accepted from triage, and created as work", async () => {
+    seedUmbrella([{ id: "a", triage: true }, { id: "b" }]).close();
+    const db = openDb({ path: dbPath });
+    acceptTask(db, "a", { workstream: "test" });
+    closeTask(db, "a", rej);
+    closeTask(db, "b", rej);
+    db.close();
+    const r = await runCli(closeIfReady, dbPath);
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toContain("a, b");
+    expect(umbrellaStatus()).toBe("OPEN");
+  });
+
+  it("a triage task claimed (force) then rejected is work and refuses", async () => {
+    seedUmbrella([{ id: "a", triage: true }]).close();
+    const db = openDb({ path: dbPath });
+    await claimTask(db, "a", { workstream: "test", force: true, self: true });
+    closeTask(db, "a", rej);
+    db.close();
+    expect((await runCli(closeIfReady, dbPath)).exitCode).toBe(4);
+  });
+
+  it("--json refusal is a JSON error envelope, exit 4", async () => {
+    seedBlocker("rejected");
+    const r = await runCli([...closeIfReady, "--json"], dbPath);
+    expect(r.exitCode).toBe(4);
+    expect(
+      JSON.parse(r.stderr || r.stdout).error ?? JSON.parse(r.stderr || r.stdout),
+    ).toBeDefined();
+    expect(r.stderr + r.stdout).toContain("CLOSED/rejected");
+  });
+
+  it.each([
+    ["OPEN/todo", () => undefined],
+    [
+      "OPEN/parked",
+      (d: ReturnType<typeof openDb>) => parkTask(d, "a", { workstream: "test", why: "later" }),
+    ],
+    [
+      "IN_PROGRESS",
+      (d: ReturnType<typeof openDb>) => claimTask(d, "a", { workstream: "test", self: true }),
+    ],
+  ])("a %s blocker skips (exit 0), umbrella stays open", async (_n, mutate) => {
+    const seed = seedUmbrella([{ id: "a" }]);
+    await mutate(seed);
+    seed.close();
+    const r = await runCli(closeIfReady, dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(r.stdout).toContain("Skipped");
+    expect(umbrellaStatus()).toBe("OPEN");
+  });
+
+  it("an OPEN/triage blocker skips (exit 0)", async () => {
+    seedUmbrella([{ id: "a", triage: true }]).close();
+    const r = await runCli(closeIfReady, dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(r.stdout).toContain("Skipped");
+    expect(umbrellaStatus()).toBe("OPEN");
+  });
+
+  it("precedence: rejected work + open blocker refuses (not skip)", async () => {
+    const seed = seedUmbrella([{ id: "a" }, { id: "b" }]);
+    closeTask(seed, "a", rej);
+    seed.close();
+    expect((await runCli(closeIfReady, dbPath)).exitCode).toBe(4);
+  });
+
+  it("precedence: rejected work + pending check refuses (not skip)", async () => {
+    const seed = seedUmbrella([{ id: "a" }, { id: "b" }]);
+    closeTask(seed, "a", rej);
+    closeTask(seed, "b", { workstream: "test", evidence: "e" });
+    seed.close();
+    const c = await runCli(
+      ["task", "check", "b", "-w", "test", "--by", "claude/opus", "--brief", "x"],
+      dbPath,
+    );
+    expect(c.exitCode).toBeNull();
+    expect((await runCli(closeIfReady, dbPath)).exitCode).toBe(4);
+  });
+
+  it.each([["--evidence"], ["--why"]])(
+    "%s - with empty or whitespace stdin is a usage error",
+    async (flag) => {
+      seedBlocker("done");
+      for (const body of ["", "  \n\t\n"]) {
+        setStdinReaderForTests(async () => body);
+        const args =
+          flag === "--why"
+            ? ["task", "close", "umbrella", "-w", "test", "--as", "wontfix", "--why", "-"]
+            : ["task", "close", "umbrella", "-w", "test", "--evidence", "-"];
+        const r = await runCli(args, dbPath);
+        expect(r.exitCode).toBe(2);
+        expect(r.stderr).toContain(flag);
+      }
+      expect(umbrellaStatus()).toBe("OPEN");
+    },
+  );
+
+  it("--note - reads stdin", async () => {
+    seedBlocker("done");
+    setStdinReaderForTests(async () => "noted $X\n");
+    const r = await runCli(["task", "close", "umbrella", "-w", "test", "--note", "-"], dbPath);
+    expect(r.exitCode).toBeNull();
+    const n = await runCli(["task", "notes", "umbrella", "-w", "test"], dbPath);
+    expect(n.stdout).toContain("CLOSE: noted $X");
+  });
+
+  it("a bare '-' is storable via stdin", async () => {
+    seedBlocker("done");
+    setStdinReaderForTests(async () => "-\n");
+    const r = await runCli(["task", "close", "umbrella", "-w", "test", "--evidence", "-"], dbPath);
+    expect(r.exitCode).toBeNull();
+  });
+
+  it.each([
+    ["--evidence", "--why"],
+    ["--note", "--why"],
+  ])("%s - with %s - is a usage error, stdin untouched", async (a, b) => {
+    seedBlocker("done");
+    let reads = 0;
+    setStdinReaderForTests(async () => {
+      reads++;
+      return "x";
+    });
+    const r = await runCli(
+      ["task", "close", "umbrella", "-w", "test", "--as", "wontfix", a, "-", b, "-"],
+      dbPath,
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("at most one");
+    expect(reads).toBe(0);
   });
 });

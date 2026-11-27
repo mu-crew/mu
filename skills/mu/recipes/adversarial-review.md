@@ -9,10 +9,10 @@ Use when a unit's commits must be checked by someone other than its author befor
    mu task add review_x -w <ws> -t "Review x" --blocked-by x --note 'ACCEPTANCE: see x notes. Refute; findings, not style.'
    ```
 
-3. **Fresh reviewer**, a checker per [models](models.md): a worker, or a native subagent under `mu task check review_x` (you act on its verdict). Send the diff range, criteria and gate records, not the worker's reasoning. Its only writes are findings, the verdict and the close.
+3. **Fresh reviewer**, a checker per [models](models.md): a worker, or a native subagent under `mu task check review_x` (you act on its verdict). Send the diff range, criteria and gate records, not the worker's reasoning. Its only writes: findings, verdict, close.
 4. **Reviewer brief:** reproduce claimed failures; report unmet requirements, untested or broken behaviour, scope creep, unsupported evidence, each as a [finding](findings.md); `UNVERIFIED` for what it could not check. Close:
    - ACCEPT: `mu task close review_x --evidence "<command it ran>: <result>"`
-   - REJECT: `mu task close review_x --as rejected --why "<n> findings: <ids>"`
+   - REJECT: `mu task close review_x --as rejected --why "<n> findings: <ids>"` (refuses `--if-ready`)
 5. **Act.** ACCEPT: cherry-pick `x`, verify the merge ([orchestrator-loop](orchestrator-loop.md)). REJECT: rejecting unblocked `x`'s dependents; add `review_x_2` blocked by every finding, re-block them on it, decide the findings, send accepted ones to the original worker, then a fresh reviewer.
 6. **Two rejections of one unit end the loop**: split it, change the criteria, or ask the human.
 

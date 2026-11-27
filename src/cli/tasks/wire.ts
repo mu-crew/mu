@@ -427,7 +427,7 @@ export function wireTaskCommands(program: Command): void {
     .option(...WORKSTREAM_OPT)
     .option(
       "--evidence <text>",
-      "record what the caller observed (e.g. 'tests pass: npm test exit 0'); `-` reads it from stdin (--evidence - <<'EOF'); a bare \"-\" cannot be stored, write \"-.\" instead",
+      "record what the caller observed (e.g. 'tests pass: npm test exit 0'); `-` reads it from stdin (--evidence - <<'EOF'); at most one of --evidence/--note/--why may be '-'",
     )
     .option(...JSON_OPT)
     .action(function (id: string) {

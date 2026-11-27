@@ -242,7 +242,11 @@ mu task release build -w auth
   note appends the title of each task id it names.
 - `--if-ready` closes only when every blocker is closed and every check
   recorded on a blocker has a verdict. Otherwise it lists the open blockers
-  and the unanswered checks and exits 0.
+  and the unanswered checks and exits 0. A blocker closed `rejected` after
+  work was accepted (or created as normal work, e.g. a rejected merge or
+  review gate) refuses with exit 4, before any wait. A finding rejected
+  straight from triage counts as decided; `wontfix`, `duplicate` and
+  `superseded` count too.
 - A check a native subagent or a cross-family pane runs is recorded:
   `mu task check <id> --by claude/opus --brief - <<'EOF'` prints
   `check=<id>`, and `mu task verdict <id> --check <check> - <<'EOF'` records
