@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAgent } from "../src/agents.js";
 import { newRemoteKey, remoteAnchorWrapper } from "../src/anchors.js";
 import {
@@ -27,7 +27,24 @@ import {
   textTied,
   textTurnAfter,
 } from "../src/channels/hooks-remote.js";
-import { hookSilence } from "../src/channels/hooks-silence.js";
+import { HOOK_SILENCE_READ_BUDGET_MS, hookSilence } from "../src/channels/hooks-silence.js";
+
+// The advisory's fresh node read has a 1 s budget in the product; a loaded host spends it
+// on the fake node's sh + node reads and the advisory then (correctly) says nothing. The
+// tests give it a long one; `wait` (src/cli/wait.ts) calls through this wrapper too.
+const silence = vi.hoisted(() => ({ budgetMs: 30_000 }));
+vi.mock("../src/channels/hooks-silence.js", async (orig) => {
+  const m = await orig<typeof import("../src/channels/hooks-silence.js")>();
+  return {
+    ...m,
+    hookSilence: (
+      t: Parameters<typeof m.hookSilence>[0],
+      now?: number,
+      budgetMs = silence.budgetMs,
+    ) => m.hookSilence(t, now, budgetMs),
+  };
+});
+
 import { channelTarget, hooksChannel } from "../src/channels/index.js";
 import type { RemoteSnapshot } from "../src/channels/types.js";
 import { type Db, openDb } from "../src/db.js";
@@ -767,22 +784,20 @@ describe("a send that drew no hook event (a dialog took it)", () => {
       // codex, no row before its first prompt: the prompt's events are still on the node.
       await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
       const later = Date.now() + 60_000;
-      expect(await hookSilence(await target(), later, 30_000)).toContain("no hook event");
+      expect(await hookSilence(await target(), later)).toContain("no hook event");
       node.emit("session_start", { source: "startup" });
       node.emit("prompt_submitted");
       expect(node.pending()).toBe(2);
-      expect(await hookSilence(await target(), later, 30_000)).toBeUndefined();
+      expect(await hookSilence(await target(), later)).toBeUndefined();
       expect(node.pending()).toBe(0);
       // claude, a stopped row from its last turn: the next prompt's event is still on the node.
       node.emit("turn_stopped", { text: "done" });
       await (await target()).remote?.read();
       db.prepare("UPDATE agents SET cli = 'claude' WHERE name = 'cw'").run();
       await runCliJson(["agent", "send", "cw", "again", "-w", "auth", "--force", "--json"], dbPath);
-      expect(await hookSilence(await target(), Date.now() + 60_000, 30_000)).toContain(
-        "no hook event",
-      );
+      expect(await hookSilence(await target(), Date.now() + 60_000)).toContain("no hook event");
       node.emit("prompt_submitted");
-      expect(await hookSilence(await target(), Date.now() + 60_000, 30_000)).toBeUndefined();
+      expect(await hookSilence(await target(), Date.now() + 60_000)).toBeUndefined();
     });
   });
 
@@ -790,6 +805,7 @@ describe("a send that drew no hook event (a dialog took it)", () => {
     await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
     fake.screen = () => DIALOG;
     node.slowReads(5);
+    silence.budgetMs = HOOK_SILENCE_READ_BUDGET_MS; // this test is about the product's budget
     try {
       await withEnv("MU_HOOK_SILENCE_MS", "1", async () => {
         const t0 = Date.now();
@@ -805,6 +821,7 @@ describe("a send that drew no hook event (a dialog took it)", () => {
         expect(took).toBeLessThan(4500); // well under the 5 s stalled read
       });
     } finally {
+      silence.budgetMs = 30_000;
       node.slowReads(0);
     }
   }, 20_000);
