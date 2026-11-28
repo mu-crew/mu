@@ -148,8 +148,9 @@ function asArray(v: unknown): unknown[] {
 async function api(
   method: string,
   input: Record<string, unknown>,
+  extraFlags: readonly string[] = [],
 ): Promise<Record<string, unknown>> {
-  const args = ["api", "call", method, JSON.stringify(input)];
+  const args = ["api", "call", ...extraFlags, method, JSON.stringify(input)];
   const out = (await rex(args)).trim();
   let parsed: unknown;
   try {
@@ -707,12 +708,15 @@ export async function attachCommands(target: AttachTarget): Promise<readonly Mux
   return [{ command: rexBinary(), args: [...rexGlobalFlags(), ...select] }];
 }
 
-/** The label of the Rex session this process runs in (`$REX_SESSION`), or undefined outside Rex. */
+/** The label of the Rex session this process runs in (`$REX_BLOCK` or `$REX_SESSION`), or undefined outside Rex. */
 export async function currentSessionName(): Promise<string | undefined> {
-  const id = process.env.REX_SESSION;
-  if (id === undefined || id.length === 0) return undefined;
+  const block = process.env.REX_BLOCK;
+  const session = process.env.REX_SESSION;
+  if (!block && !session) return undefined;
   try {
-    const view = await api("session.view", { session_id: id });
+    const view = block
+      ? await api("session.view", {}, ["-s", block])
+      : await api("session.view", { session_id: session });
     return asString(view.label);
   } catch {
     return undefined;
@@ -755,7 +759,9 @@ export async function healthCheck(): Promise<MuxHealth> {
 
 /** True when this process runs in a Rex terminal (and not in a tmux nested inside it). */
 export function insideRex(): boolean {
-  return Boolean(process.env.REX_SESSION) && process.env.TERM_PROGRAM === "rex";
+  return (
+    Boolean(process.env.REX_BLOCK || process.env.REX_SESSION) && process.env.TERM_PROGRAM === "rex"
+  );
 }
 
 export const rexBackend: MuxBackend = Object.freeze({

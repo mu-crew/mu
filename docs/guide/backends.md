@@ -36,7 +36,7 @@ restarts, so murmur trusts `#{@mu_pending}` only while the pane reports OSC
 7501 working.
 
 Rex has no per-block options, so `@mu_role` has no Rex equivalent there. In
-a Rex terminal (`$REX_SESSION` and `TERM_PROGRAM=rex`) the pane's own pi
+a Rex terminal (`$REX_BLOCK` or `$REX_SESSION` with `TERM_PROGRAM=rex`) the pane's own pi
 instead reports an OSC 7501 `idle` record under id `mu/role` whose base64
 `title` is `delegate` (`MU_DELEGATE=1`, checked first), `orchestrator`
 (`MU_ORCHESTRATOR=1`) or `worker`, for an agent mu
@@ -56,8 +56,8 @@ mu picks the backend from the first rule that matches:
 
 1. `MU_MUX=tmux` or `rex`. An unknown value (and `herdr`) fails with exit 1.
 2. `$TMUX` or `$TMUX_PANE` is set: tmux.
-3. `$REX_SESSION` with `TERM_PROGRAM=rex` (a Rex terminal): rex. Last,
-   because tmux started in a Rex tab inherits `$REX_SESSION`.
+3. `$REX_BLOCK` or `$REX_SESSION` with `TERM_PROGRAM=rex` (a Rex terminal): rex. Last,
+   because tmux started in a Rex tab inherits them.
 4. The first binary that runs: tmux, then rex.
 5. None: `NoMultiplexerError`, exit 5.
 

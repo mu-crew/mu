@@ -362,7 +362,7 @@ export function checkCaseCollisions(db: Db): FleetHazard {
       "",
       "They coexist on Linux (ext4 is case-sensitive) but COLLIDE on macOS (APFS",
       "is case-insensitive) and on Windows (NTFS). Because a workstream name IS a",
-      "tmux session name and seeds every worktree path, a Mac in the fleet sees",
+      "mux session name and seeds every worktree path, a Mac in the fleet sees",
       "one session and one directory where Linux sees two — so the fleet reaches",
       "different states depending on which machine applies an op first.",
       "",

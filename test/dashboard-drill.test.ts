@@ -933,25 +933,27 @@ describe("attach", () => {
     await withEnv("TMUX", undefined, () =>
       withEnv("TMUX_PANE", undefined, () =>
         withEnv("REX_SESSION", undefined, () =>
-          withEnv("MU_MUX", undefined, async () => {
-            const none = installNoMux();
-            try {
-              const ran: MuxCommand[] = [];
-              const ui = await open(async (s) => {
-                ran.push(s);
-                return { code: 0, stderr: "" };
-              });
-              await toAgents(ui);
-              await ui.press("a");
-              await ui.until((s) => s.includes("could not attach"));
-              expect(ui.screen()).toContain("Scrollback  ws/w1");
-              expect(ran).toEqual([]);
-              expect(ui.screen()).not.toContain("from a shell outside"); // no line to offer
-              ui.unmount();
-            } finally {
-              none.restore();
-            }
-          }),
+          withEnv("REX_BLOCK", undefined, () =>
+            withEnv("MU_MUX", undefined, async () => {
+              const none = installNoMux();
+              try {
+                const ran: MuxCommand[] = [];
+                const ui = await open(async (s) => {
+                  ran.push(s);
+                  return { code: 0, stderr: "" };
+                });
+                await toAgents(ui);
+                await ui.press("a");
+                await ui.until((s) => s.includes("could not attach"));
+                expect(ui.screen()).toContain("Scrollback  ws/w1");
+                expect(ran).toEqual([]);
+                expect(ui.screen()).not.toContain("from a shell outside"); // no line to offer
+                ui.unmount();
+              } finally {
+                none.restore();
+              }
+            }),
+          ),
         ),
       ),
     );

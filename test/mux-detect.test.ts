@@ -49,6 +49,8 @@ describe("detectMux", () => {
     delete process.env[MU_MUX];
     delete process.env[TMUX];
     delete process.env.TMUX_PANE;
+    delete process.env.REX_SESSION;
+    delete process.env.REX_BLOCK;
     setRexExecutor(async () => ({ stdout: "", stderr: "not found", exitCode: 127 }));
     resetMux();
   });
@@ -60,6 +62,7 @@ describe("detectMux", () => {
     resetTmuxExecutor();
     resetRexExecutor();
     delete process.env.REX_SESSION;
+    delete process.env.REX_BLOCK;
     if (INHERITED_TERM_PROGRAM === undefined) delete process.env.TERM_PROGRAM;
     else process.env.TERM_PROGRAM = INHERITED_TERM_PROGRAM;
     resetMux();
@@ -145,9 +148,26 @@ describe("detectMux", () => {
     expect((await detectMux()).name).toBe("tmux");
   });
 
+  it("a Rex terminal with $REX_BLOCK (no $REX_SESSION) selects rex without shelling out", async () => {
+    makeTmuxAvailable();
+    setRexExecutor(async () => {
+      throw new Error("the ambient signal is conclusive; no probe expected");
+    });
+    process.env.REX_BLOCK = "block:01a22185-29c5-70f2-b18f-9fc55891249f";
+    process.env.TERM_PROGRAM = "rex";
+    expect((await detectMux()).name).toBe("rex");
+  });
+
   it("a stale $REX_SESSION outside a Rex terminal does not select rex", async () => {
     makeTmuxAvailable();
     process.env.REX_SESSION = "session:01a1a0d3-ec66-7aa6-9558-c70476578a93";
+    process.env.TERM_PROGRAM = "iTerm.app";
+    expect((await detectMux()).name).toBe("tmux");
+  });
+
+  it("a stale $REX_BLOCK outside a Rex terminal does not select rex", async () => {
+    makeTmuxAvailable();
+    process.env.REX_BLOCK = "block:01a22185-29c5-70f2-b18f-9fc55891249f";
     process.env.TERM_PROGRAM = "iTerm.app";
     expect((await detectMux()).name).toBe("tmux");
   });

@@ -52,7 +52,7 @@ describe("resolveWorkstream env fallback order", () => {
   it("$MU_SESSION alone does not route: one-line error, session only a suggestion", async () => {
     process.env.MU_SESSION = "sess";
     await expect(resolveWorkstream()).rejects.toThrow(
-      /^no workstream: pass -w <name> \(tmux session mu-fromtmux: -w fromtmux\)$/,
+      /^no workstream: pass -w <name> \(mux session mu-fromtmux: -w fromtmux\)$/,
     );
   });
 

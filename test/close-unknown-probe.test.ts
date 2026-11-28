@@ -98,16 +98,18 @@ const noMux = (fn: () => Promise<void>): Promise<void> =>
   withEnv("TMUX", undefined, () =>
     withEnv("TMUX_PANE", undefined, () =>
       withEnv("REX_SESSION", undefined, () =>
-        withEnv("MU_MUX", undefined, async () => {
-          mux?.restore();
-          mux = undefined;
-          const none = installNoMux();
-          try {
-            await fn();
-          } finally {
-            none.restore();
-          }
-        }),
+        withEnv("REX_BLOCK", undefined, () =>
+          withEnv("MU_MUX", undefined, async () => {
+            mux?.restore();
+            mux = undefined;
+            const none = installNoMux();
+            try {
+              await fn();
+            } finally {
+              none.restore();
+            }
+          }),
+        ),
       ),
     ),
   );

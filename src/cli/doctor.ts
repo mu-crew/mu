@@ -187,7 +187,7 @@ export async function cmdDoctor(
   console.log(pc.bold("\nenvironment"));
   const health = await muxHealth();
   if (health === undefined) {
-    console.log(`  multiplexer      : ${pc.red("NONE")} — install tmux ≥ 3.0`);
+    console.log(`  multiplexer      : ${pc.red("NONE")} — install tmux ≥ 3.0 or Rex`);
   } else {
     const label = pad(health.name);
     if (health.ok) console.log(`  ${label}: ${pc.green("ok")} (${health.version ?? "?"})`);

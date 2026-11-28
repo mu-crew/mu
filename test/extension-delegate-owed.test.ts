@@ -21,8 +21,12 @@ const set = (n: number) => ["-S", SOCK, "set-option", "-p", "-t", "%7", "@mu_pen
 const unset = ["-S", SOCK, "set-option", "-p", "-t", "%7", "-u", "@mu_pending"];
 const ctx = { sessionManager: { getSessionId: () => "s1" } };
 
+const INHERITED_TERM_PROGRAM = process.env.TERM_PROGRAM;
+
 /** Claim the pane (as mu-pi's bind does); every later set-option argv lands in the result. */
 async function claimed(): Promise<string[][]> {
+  const tp = "TERM_PROGRAM";
+  delete process.env[tp];
   process.env.TMUX = `${SOCK},123,0`;
   process.env.TMUX_PANE = "%7";
   const seen: string[][] = [];
@@ -37,6 +41,9 @@ async function claimed(): Promise<string[][]> {
 }
 afterEach(() => {
   for (const k of ["TMUX", "TMUX_PANE"]) delete process.env[k];
+  const tp = "TERM_PROGRAM";
+  if (INHERITED_TERM_PROGRAM === undefined) delete process.env[tp];
+  else process.env[tp] = INHERITED_TERM_PROGRAM;
   setPaneOptionRunnerForTests(null);
 });
 

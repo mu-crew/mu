@@ -34,7 +34,7 @@ export function resolveMe(db: Db): MeIdentity {
   const caller = spawnerFromEnv();
   if (caller !== null) return { caller, agent: null };
   throw new UsageError(
-    "no identity: mu me needs the env spawn injects (MU_MANAGED_AGENT=1, MU_WORKSTREAM, MU_AGENT_NAME) or a pi session ($PI_SESSION_ID); a tmux pane is never guessed",
+    "no identity: mu me needs the env spawn injects (MU_MANAGED_AGENT=1, MU_WORKSTREAM, MU_AGENT_NAME) or a pi session ($PI_SESSION_ID); a pane is never guessed",
     { showHelp: false },
   );
 }

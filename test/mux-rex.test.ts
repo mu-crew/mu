@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   attachCommands,
   capture,
+  currentSessionName,
   ensureSession,
   isValidPaneId,
   killPane,
@@ -469,6 +470,21 @@ describe("rex send, capture, attach", () => {
       steps = await attachCommands({ session: "mu-auth" });
     });
     expect(steps[0]?.args.slice(0, 2)).toEqual(["-S", "unix:///tmp/r.sock"]);
+  });
+
+  it("resolves the current session label from $REX_BLOCK, falling back to $REX_SESSION", async () => {
+    mux = installMux("rex", [["api call", json({ session_id: SID, label: "mu-auth" })]]);
+    await withEnv("REX_BLOCK", BID, async () => {
+      expect(await currentSessionName()).toBe("mu-auth");
+    });
+    expect(mux.calls.at(-1)).toEqual(["api", "call", "-s", BID, "session.view", "{}"]);
+
+    await withEnv("REX_SESSION", SID, async () => {
+      expect(await currentSessionName()).toBe("mu-auth");
+    });
+    expect(mux.calls.at(-1)).toEqual(["api", "call", "session.view", json({ session_id: SID })]);
+
+    expect(await currentSessionName()).toBeUndefined();
   });
 
   it("is a full backend record", () => {

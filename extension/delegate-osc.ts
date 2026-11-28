@@ -129,14 +129,14 @@ export function roleOsc(role: PaneRole | undefined): string {
 
 /**
  * The role a mu-placed pi reports, or undefined: not in a Rex terminal
- * (`$REX_SESSION` and `TERM_PROGRAM=rex`, as mu's Rex detection; tmux has
- * `@mu_role`), or not placed by mu (`MU_MANAGED_AGENT` and `MU_AGENT_NAME`).
- * Derived as mu's `actor_role` (`resolveActorRole`): `MU_DELEGATE=1` is a
- * delegate (checked first), `MU_ORCHESTRATOR=1` the orchestrator, anything
- * else a worker.
+ * (`$REX_BLOCK` or `$REX_SESSION` with `TERM_PROGRAM=rex`, as mu's Rex
+ * detection; tmux has `@mu_role`), or not placed by mu (`MU_MANAGED_AGENT`
+ * and `MU_AGENT_NAME`). Derived as mu's `actor_role` (`resolveActorRole`):
+ * `MU_DELEGATE=1` is a delegate (checked first), `MU_ORCHESTRATOR=1` the
+ * orchestrator, anything else a worker.
  */
 export function paneRole(env: NodeJS.ProcessEnv = process.env): PaneRole | undefined {
-  if (env.TERM_PROGRAM !== "rex" || !env.REX_SESSION) return undefined;
+  if (env.TERM_PROGRAM !== "rex" || (!env.REX_BLOCK && !env.REX_SESSION)) return undefined;
   if (env.MU_MANAGED_AGENT !== "1" || !env.MU_AGENT_NAME) return undefined;
   if (env.MU_DELEGATE === "1") return "delegate";
   return env.MU_ORCHESTRATOR === "1" ? "orchestrator" : "worker";

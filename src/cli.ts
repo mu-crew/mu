@@ -180,7 +180,7 @@ export async function missingWorkstreamError(
 ): Promise<UsageError> {
   const parts: string[] = [];
   const session = await resolveMuxSessionWorkstreamName();
-  if (session !== null) parts.push(`tmux session mu-${session}: -w ${session}`);
+  if (session !== null) parts.push(`mux session mu-${session}: -w ${session}`);
   if (opts.extra !== undefined) parts.push(opts.extra);
   const tail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
   return new UsageError(`no workstream: pass -w <name>${opts.orAll ? " or --all" : ""}${tail}`, {
@@ -458,7 +458,7 @@ export function resolveSelf(db: Db): AgentRow {
   throw new UsageError(
     paneId
       ? `pane ${paneId} is not a managed agent. Use \`mu agent list\` to see managed panes, or \`mu agent spawn\` to register a new one.`
-      : "not a managed agent: this verb needs the identity spawn injects (MU_AGENT_NAME, MU_WORKSTREAM) or a managed tmux pane",
+      : "not a managed agent: this verb needs the identity spawn injects (MU_AGENT_NAME, MU_WORKSTREAM) or a managed mux pane",
     { showHelp: false },
   );
 }

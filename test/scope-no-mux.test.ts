@@ -153,7 +153,7 @@ for (const where of ["inside", "outside"] as const) {
     it("the session name is only a suggestion", async () => {
       const r = await runCli(["task", "list"], dbPath);
       expect(r.exitCode).toBe(2);
-      if (where === "inside") expect(r.stderr).toContain("(tmux session mu-decoy: -w decoy)");
+      if (where === "inside") expect(r.stderr).toContain("(mux session mu-decoy: -w decoy)");
       else expect(r.stderr).not.toContain("decoy");
     });
 

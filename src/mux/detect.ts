@@ -36,7 +36,7 @@ const KNOWN_NAMES: readonly string[] = BACKENDS.map((b) => b.name);
  *      typo'd backend name should fail loud, not quietly run on tmux.
  *   2. Ambient signal    — an env var proving the CALLER is already
  *      inside a managed pane of that mux ($TMUX or $TMUX_PANE for tmux,
- *      $REX_SESSION with TERM_PROGRAM=rex for Rex). The most specific
+ *      $REX_BLOCK or $REX_SESSION with TERM_PROGRAM=rex for Rex). The most specific
  *      signal wins, since tmux can run nested inside Rex.
  *   3. Availability      — whichever backend's binary actually runs.
  *      Ties break in BACKENDS order (tmux is the incumbent).
@@ -62,7 +62,7 @@ export async function detectMux(): Promise<MuxBackend> {
   if (process.env.TMUX || process.env.TMUX_PANE) return tmuxBackend;
 
   // A Rex terminal, last: tmux runs inside Rex, never the reverse,
-  // and both set their own vars in their panes ($REX_SESSION is inherited).
+  // and both set their own vars in their panes ($REX_BLOCK / $REX_SESSION is inherited).
   if (insideRex()) return rexBackend;
 
   for (const backend of BACKENDS) {

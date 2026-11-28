@@ -13,6 +13,11 @@ Older releases, one file per major: [5](docs/history/CHANGELOG-5.md),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rex terminal detection now recognises `$REX_BLOCK`** (with `TERM_PROGRAM=rex`), not only the retired `$REX_SESSION`. Current Rex builds no longer set `$REX_SESSION`, so `insideRex()`, `currentSessionName()`, and the pi extension's `mu/role` OSC 7501 reporter silently fell back to tmux (vtmux) inside Rex panes (causing `mu_delegate`, `mu agent spawn`, and `mu doctor` to target tmux). `$REX_SESSION` stays as a fallback for older Rex builds.
+- **Backend-agnostic CLI messages.** Replaced hardcoded `tmux` wording in `missingWorkstreamError` (`mux session mu-<ws>`), `resolveSelf`, `mu me`, `workstream.name_invalid`, `mu doctor`'s `name-case` remediation, and `NoMultiplexerError` / `mu doctor`'s missing-multiplexer hint.
+
 ### Added
 
 - **A settle's transcript entry names the answers it showed.** The `mu-keep-driving` custom message now carries `details: { shown: [<call id>, …] }`, the same list the settle reports to the delegate side. A transcript reader (mural) can tell which delegate answers a settle delivered without parsing its text, so a report that quotes another call's answer header is no longer mistaken for a second delivery (mural upstream ask #15).

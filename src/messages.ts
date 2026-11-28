@@ -368,7 +368,7 @@ export const MESSAGES = {
   "workstream.name_invalid": (attempted: string, reservedPrefix: boolean) =>
     `invalid workstream name ${JSON.stringify(attempted)}: ${
       reservedPrefix
-        ? `the 'mu-' prefix is reserved (mu adds it to the tmux session name, so '${attempted}' would be double-prefixed as 'mu-${attempted}'). Drop the 'mu-' from the name.`
+        ? `the 'mu-' prefix is reserved (mu adds it to the mux session name, so '${attempted}' would be double-prefixed as 'mu-${attempted}'). Drop the 'mu-' from the name.`
         : `use [a-z][a-z0-9_-]{0,31}`
     }`,
   "workstream.name_reserved": (attempted: string) =>
@@ -414,7 +414,7 @@ export const MESSAGES = {
     `${subject} changed since preview (rev ${expected} → ${current}); preview again: ${preview}`,
   "mux.pane_not_found": (backend: string, pane: string) => `${backend} pane not found: ${pane}`,
   "mux.none_found": (tried: readonly string[]) =>
-    `no supported multiplexer found (tried: ${tried.join(", ")}); install tmux ≥ 3.0 (task, DAG and sql verbs work without one)`,
+    `no supported multiplexer found (tried: ${tried.join(", ")}); install tmux ≥ 3.0 or Rex (task, DAG and sql verbs work without one)`,
   "mux.tmux_no_server_in_agent": () =>
     "no tmux server is running, and mu will not start one from inside an agent: every pane would inherit this agent's sandbox. Start tmux from a terminal (tmux new-session -d), then retry",
   "mux.tmux_failed": (args: readonly string[], exit: number | null, detail: string) =>
