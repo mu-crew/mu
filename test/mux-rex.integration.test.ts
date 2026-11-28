@@ -130,7 +130,9 @@ describeIfRex("rex integration (private Rex server)", () => {
     });
     const tool = await spawnIn(
       "tool",
-      String.raw`sh -c "printf '\033]7501;state=working:app=cargo\033\\\\'"; echo TOOL-DON''E; exec sleep 60`,
+      // Keep the child tool alive in its own foreground process group (`; true` stops the
+      // outer shell from tail-execing it) so Rex reads its owner pid before it can exit.
+      String.raw`sh -c "printf '\033]7501;state=working:app=cargo\033\\\\'; echo TOOL-DON''E; exec sleep 60"; true`,
     );
     await pollUntil(async () => (await capture(tool)).includes("TOOL-DONE"), {
       description: "tool pane ran its child",
