@@ -196,6 +196,7 @@ describe("rex spawnAgent", () => {
     });
     expect(id).toBe(BID);
     expect(created).toEqual([BID]);
+    expect(mux.calls.at(-1)).toEqual(["do", "client.tab.mute", "muted=true", `window_id=${WID}`]);
     const input = apiInput(mux, "session.new_window");
     expect(input).toMatchObject({ session_id: SID, window_label: "agents", focus: false });
     expect(input.layout).toEqual({
@@ -237,6 +238,30 @@ describe("rex spawnAgent", () => {
       "-ic",
       "export MU_MANAGED_AGENT='1' MU_AGENT_NAME='alice' MU_WORKSTREAM='auth' MU_ACTOR_SESSION='' MU_ACTOR_ANCHOR='' || exit\npi --model x",
     ]);
+  });
+
+  it("does not mute a newly created orchestrator tab (MU_ORCHESTRATOR=1)", async () => {
+    mux = installMux("rex", [
+      ["api call session.list", SESSIONS],
+      ["api call session.view", VIEW(["_mu"])],
+      ["api call session.new_window", json({ window_id: WID, block_ids: [BID] })],
+    ]);
+    await withEnv("SHELL", "/bin/zsh", async () => {
+      await spawnAgent({ ...opts, env: { ...opts.env, MU_ORCHESTRATOR: "1" } });
+    });
+    expect(mux.calls.some((c) => c[0] === "do" && c[1] === "client.tab.mute")).toBe(false);
+  });
+
+  it("ignores client.tab.mute failure when no Rex app client is connected", async () => {
+    mux = installMux("rex", [
+      ["api call session.list", SESSIONS],
+      ["api call session.view", VIEW(["_mu"])],
+      ["api call session.new_window", json({ window_id: WID, block_ids: [BID] })],
+      ["do client.tab.mute", { stdout: "", stderr: "no app client is connected", exitCode: 1 }],
+    ]);
+    await withEnv("SHELL", "/bin/zsh", async () => {
+      expect(await spawnAgent(opts)).toBe(BID);
+    });
   });
 
   it("splits an existing window, and arms retention at creation", async () => {

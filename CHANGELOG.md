@@ -13,6 +13,10 @@ Older releases, one file per major: [5](docs/history/CHANGELOG-5.md),
 
 ## [Unreleased]
 
+### Changed
+
+- **Rex worker and delegate tabs are muted on spawn.** When `spawnAgent` opens a new Rex window for a worker or delegate (`MU_ORCHESTRATOR !== "1"`), it best-effort runs `rex do client.tab.mute muted=true window_id=<id>` so Rex does not chime/notify on every worker or delegate completion. Orchestrators (`mu orchestrate`) stay unmuted, and a missing Rex app client is ignored.
+
 ## [6.0.1] — 2026-11-28
 
 ### Fixed

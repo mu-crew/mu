@@ -431,6 +431,15 @@ export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
     throw new RexError(["spawnAgent"], `no block id in reply: ${JSON.stringify(created)}`, 0);
   }
   opts.onPaneCreated?.(paneId);
+  // Mute newly created worker/delegate tabs so Rex does not ping on every
+  // turn completion; orchestrators (MU_ORCHESTRATOR=1) stay unmuted.
+  // Best-effort: fails fast when no Rex app client is connected.
+  const targetWindow = asString(created.window_id);
+  if (windowId === undefined && targetWindow !== undefined && opts.env.MU_ORCHESTRATOR !== "1") {
+    await rex(["do", "client.tab.mute", "muted=true", `window_id=${targetWindow}`]).catch(
+      () => undefined,
+    );
+  }
   return paneId;
 }
 
