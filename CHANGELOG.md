@@ -13,6 +13,8 @@ Older releases, one file per major: [5](docs/history/CHANGELOG-5.md),
 
 ## [Unreleased]
 
+## [6.0.1] — 2026-11-28
+
 ### Fixed
 
 - **Rex terminal detection now recognises `$REX_BLOCK`** (with `TERM_PROGRAM=rex`), not only the retired `$REX_SESSION`. Current Rex builds no longer set `$REX_SESSION`, so `insideRex()`, `currentSessionName()`, and the pi extension's `mu/role` OSC 7501 reporter silently fell back to tmux (vtmux) inside Rex panes (causing `mu_delegate`, `mu agent spawn`, and `mu doctor` to target tmux). `$REX_SESSION` stays as a fallback for older Rex builds.
