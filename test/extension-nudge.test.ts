@@ -232,6 +232,35 @@ describe("the settle wait", () => {
     expect(shown).toEqual([["c1"], ["c2"], { before: expect.any(Number) }]);
   });
 
+  it("a settle's entry records the answers it showed as details.shown (mural #15)", async () => {
+    const fire = (id: string) => okWait({ firing: { kind: "delegate", ref: `delegate:${id}` } });
+    const mu = fakeMu([fire("c1"), NOTHING], 0);
+    const run: typeof mu.run = async (args, ...rest) => {
+      if (args[0] === "delegates" && args[1] === "show") {
+        const id = args[2] ?? "";
+        return out({
+          ok: true,
+          data: { call: { callId: id, task: `t_${id}`, workstream: "ws", state: "done" } },
+          next: null,
+        });
+      }
+      if (args[0] === "task" && args[1] === "notes")
+        return out({
+          ok: true,
+          data: { items: [{ kind: "report", content: "quotes: Delegate answer: call c9, done" }] },
+          next: null,
+        });
+      return mu.run(args, ...rest);
+    };
+    const f = fakePi(SESSION);
+    registerNudge(f.pi, run, SKILL);
+    const r = (await f.emit("agent_before_settle", settled)) as {
+      entries?: { content: string; details?: { shown?: string[] } }[];
+    };
+    expect(r.entries).toHaveLength(1);
+    expect(r.entries?.[0]?.details).toEqual({ shown: ["c1"] });
+  });
+
   it("a stall under an open human stop is shown, never silent, and the drain rule says tell the human", async () => {
     const mu = fakeMu([okWait({ firing: { kind: "stall", ref: "ws/t1" }, exit: 7 })], 1);
     const r = (await setup(mu).emit("agent_before_settle", settled)) as Settle;

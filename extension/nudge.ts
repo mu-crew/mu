@@ -285,8 +285,16 @@ async function humanNeeds(run: MuRunner, sid: string | undefined): Promise<numbe
     : counts.reduce((a: number, b) => a + (b ?? 0), 0);
 }
 
-function entry(content: string): unknown {
-  return { type: "custom_message", customType: NUDGE_MESSAGE_TYPE, content, display: true };
+/** `details.shown`: the delegate call ids this settle showed, so a transcript reader
+ *  can tell what a settle delivered without parsing its text. */
+function entry(content: string, details?: { shown: readonly string[] }): unknown {
+  return {
+    type: "custom_message",
+    customType: NUDGE_MESSAGE_TYPE,
+    content,
+    display: true,
+    ...(details ? { details } : {}),
+  };
 }
 
 /**
@@ -412,7 +420,11 @@ export function registerNudge(
           const text = [...lead, "", ...body.head, ...body.blocks.flatMap((b) => ["", b])].join(
             "\n",
           );
-          return { entries: [entry(text)], continue: true, receipt: true };
+          return {
+            entries: [entry(text, { shown: body.shown })],
+            continue: true,
+            receipt: true,
+          };
         }
       })();
     } finally {

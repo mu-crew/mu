@@ -13,6 +13,10 @@ Older releases, one file per major: [5](docs/history/CHANGELOG-5.md),
 
 ## [Unreleased]
 
+### Added
+
+- **A settle's transcript entry names the answers it showed.** The `mu-keep-driving` custom message now carries `details: { shown: [<call id>, …] }`, the same list the settle reports to the delegate side. A transcript reader (mural) can tell which delegate answers a settle delivered without parsing its text, so a report that quotes another call's answer header is no longer mistaken for a second delivery (mural upstream ask #15).
+
 ## [6.0.0] — 2026-11-28
 
 Two first-class multiplexers. mu drives crews in tmux (vtmux) or Rex with the same verbs, and herdr is retired. Delegate answers settle reliably (their own lane), crew tags are visible and repairable, ops record an actor role, a running pi switches model with `mu agent model`, closes record the worktree landing, and a development build can no longer migrate your live DB. Breaking: herdr and its SDK exports are gone, `LogRow.workstreamName` changed meaning, and the DB's capture revision moves to 9 (mu 5.7 can no longer open it writable). Read [How to upgrade mu](docs/guide/upgrade.md) first.
