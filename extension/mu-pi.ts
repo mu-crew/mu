@@ -536,6 +536,8 @@ function serveCtl(pi: MuPiApi): () => boolean {
   /** A stale ctx or pi (mid session switch) throws on read; fail closed to busy. */
   const status = () => {
     try {
+      // No ctx: between session_shutdown and the next session_start. Read nothing stale.
+      if (!g.ctx) throw new Error("no ctx");
       return statusNow();
     } catch {
       return {

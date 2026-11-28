@@ -177,15 +177,23 @@ describe("stale ctx", () => {
     });
   });
 
-  it("a session-switch shutdown drops the old ctx, so status never reads it", async () => {
-    fake.ctx.hasPendingMessages = () => {
+  it("a session-switch shutdown reports busy without reading the old ctx/pi, then recovers", async () => {
+    const stale = vi.fn(() => {
       throw new Error("stale");
-    };
+    });
+    const level = vi.fn(() => "medium");
+    fake.ctx.hasPendingMessages = stale;
+    fake.pi.getThinkingLevel = level;
     await fake.emit("session_shutdown", { reason: "new" });
     expect(await ctlRequest(sock, { op: "status" })).toMatchObject({
       ok: true,
-      state: "idle",
+      state: "busy",
       pending: false,
     });
+    expect(stale).not.toHaveBeenCalled();
+    expect(level).not.toHaveBeenCalled();
+    fake.ctx.hasPendingMessages = () => false;
+    await fake.emit("session_start");
+    expect(await ctlRequest(sock, { op: "status" })).toMatchObject({ ok: true, state: "idle" });
   });
 });
